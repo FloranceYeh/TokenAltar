@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::{
     auth::{ConsoleAuth, require_admin, verify_password},
-    db::{AffinityRuleInput, ChannelInput},
+    db::{AffinityRuleInput, ChannelInput, SettingUpdate},
     error::{AppError, AppResult},
     gateway::surge_multiplier,
     models::{ModelPrice, User},
@@ -57,8 +57,14 @@ pub async fn register(
     .fetch_optional(&state.db.pool)
     .await?
     .unwrap_or_else(|| "false".to_string());
-    if invite_required == "true" && request.invite_code.as_deref() != Some("TOKENALTAR") {
-        return Err(AppError::Forbidden);
+    if invite_required == "true" {
+        let Some(code) = request.invite_code.as_deref() else {
+            return Err(AppError::Forbidden);
+        };
+        let accepted = state.db.consume_invite_code(code).await?;
+        if !accepted {
+            return Err(AppError::Forbidden);
+        }
     }
     let display_name = request
         .display_name
@@ -126,6 +132,7 @@ pub async fn list_channels(
     State(state): State<crate::app::AppState>,
     ConsoleAuth(_auth): ConsoleAuth,
 ) -> AppResult<Json<serde_json::Value>> {
+    state.db.refresh_channel_windows().await?;
     Ok(Json(json!(state.db.list_channels().await?)))
 }
 
@@ -189,6 +196,25 @@ pub async fn dashboard(
     State(state): State<crate::app::AppState>,
     ConsoleAuth(_auth): ConsoleAuth,
 ) -> AppResult<Json<serde_json::Value>> {
+    state.db.refresh_channel_windows().await?;
     let (multiplier, status) = surge_multiplier(&state).await;
     Ok(Json(json!(state.db.dashboard(multiplier, status).await?)))
+}
+
+pub async fn get_settings(
+    State(state): State<crate::app::AppState>,
+    ConsoleAuth(auth): ConsoleAuth,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&auth.user)?;
+    Ok(Json(json!(state.db.list_settings().await?)))
+}
+
+pub async fn update_settings(
+    State(state): State<crate::app::AppState>,
+    ConsoleAuth(auth): ConsoleAuth,
+    Json(request): Json<Vec<SettingUpdate>>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&auth.user)?;
+    state.db.upsert_settings(&request).await?;
+    Ok(Json(json!({ "ok": true })))
 }

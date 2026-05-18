@@ -1,7 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
-use chrono::{DateTime, Utc};
-use serde::Serialize;
+use chrono::{DateTime, Datelike, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{
     Row, SqlitePool,
@@ -133,6 +133,38 @@ impl Database {
             .execute(&self.pool)
             .await?;
         Ok(token)
+    }
+
+    pub async fn consume_invite_code(&self, code: &str) -> AppResult<bool> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT enabled, max_uses, used_count FROM invite_codes WHERE code = ?",
+        )
+        .bind(code)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let accepted = if let Some(row) = row {
+            let enabled = row.get::<i64, _>("enabled") != 0;
+            let max_uses: Option<i64> = row.get("max_uses");
+            let used_count: i64 = row.get("used_count");
+            enabled && max_uses.is_none_or(|max| used_count < max)
+        } else {
+            let default_code = sqlx::query_scalar::<_, String>(
+                "SELECT value FROM system_settings WHERE key = 'invite_code_default'",
+            )
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or_else(|| "TOKENALTAR".to_string());
+            code == default_code
+        };
+        if accepted {
+            sqlx::query("UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ?")
+                .bind(code)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(accepted)
     }
 
     pub async fn find_session_user(&self, token_hash: &str) -> AppResult<User> {
@@ -305,6 +337,63 @@ impl Database {
                 cache_price_per_1k: row.get("cache_price_per_1k"),
             })
             .collect())
+    }
+
+    pub async fn refresh_channel_windows(&self) -> AppResult<()> {
+        let now = Utc::now();
+        let today = now.date_naive().to_string();
+        let hour = now.format("%Y-%m-%dT%H").to_string();
+        let day = now.day() as i64;
+        sqlx::query(
+            r#"
+            UPDATE channel_limits
+            SET used_day_tokens = 0, last_day_reset_at = ?
+            WHERE last_day_reset_at IS NULL OR substr(last_day_reset_at, 1, 10) != ?
+            "#,
+        )
+        .bind(now.to_rfc3339())
+        .bind(&today)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
+            UPDATE channel_limits
+            SET used_hour_tokens = 0, last_hour_reset_at = ?
+            WHERE last_hour_reset_at IS NULL OR substr(last_hour_reset_at, 1, 13) != ?
+            "#,
+        )
+        .bind(now.to_rfc3339())
+        .bind(&hour)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
+            UPDATE channel_limits
+            SET used_cycle_tokens = 0, last_cycle_reset_at = ?
+            WHERE cycle_reset_day = ?
+              AND (last_cycle_reset_at IS NULL OR substr(last_cycle_reset_at, 1, 10) != ?)
+            "#,
+        )
+        .bind(now.to_rfc3339())
+        .bind(day)
+        .bind(&today)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
+            UPDATE channels
+            SET status = CASE
+                WHEN enabled = 0 THEN status
+                WHEN (SELECT used_cycle_tokens >= cycle_limit_tokens FROM channel_limits WHERE channel_id = channels.id) THEN 'monthly_exhausted'
+                WHEN (SELECT used_day_tokens >= daily_limit_tokens OR used_hour_tokens >= hourly_limit_tokens FROM channel_limits WHERE channel_id = channels.id) THEN 'cooling'
+                ELSE 'healthy'
+              END,
+              updated_at = datetime('now')
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn upsert_price(&self, price: &ModelPrice) -> AppResult<()> {
@@ -533,6 +622,39 @@ impl Database {
             surge_state: surge_state.to_string(),
         })
     }
+
+    pub async fn list_settings(&self) -> AppResult<Vec<SettingRecord>> {
+        let rows = sqlx::query("SELECT key, value, updated_at FROM system_settings ORDER BY key")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| SettingRecord {
+                key: row.get("key"),
+                value: row.get("value"),
+                updated_at: row.get("updated_at"),
+            })
+            .collect())
+    }
+
+    pub async fn upsert_settings(&self, settings: &[SettingUpdate]) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        for setting in settings {
+            sqlx::query(
+                r#"
+                INSERT INTO system_settings(key, value, updated_at)
+                VALUES (?, ?, datetime('now'))
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+                "#,
+            )
+            .bind(&setting.key)
+            .bind(&setting.value)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -566,6 +688,19 @@ pub struct AffinityRuleInput {
     pub ttl_seconds: i64,
     pub skip_retry_on_failure: bool,
     pub switch_on_success: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingRecord {
+    pub key: String,
+    pub value: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SettingUpdate {
+    pub key: String,
+    pub value: String,
 }
 
 fn api_key_from_row(row: &sqlx::sqlite::SqliteRow) -> ApiKeyRecord {

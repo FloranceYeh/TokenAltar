@@ -38,6 +38,7 @@ impl AppState {
         if let (Some(email), Some(password)) = (&config.admin_email, &config.admin_password) {
             db.bootstrap_admin(email, password).await?;
         }
+        db.refresh_channel_windows().await?;
         let metrics = MetricsState::default();
         let ledger_tx = spawn_ledger_worker(db.clone(), metrics.clone());
         let http = Client::builder()
@@ -71,13 +72,15 @@ pub fn build_router(state: AppState, config: &Config) -> Router {
         .route("/prices", get(crate::admin::list_prices).post(crate::admin::upsert_price))
         .route("/affinity-rules", get(crate::admin::list_affinity_rules).post(crate::admin::create_affinity_rule))
         .route("/ledger", get(crate::admin::list_ledger))
-        .route("/dashboard", get(crate::admin::dashboard));
+        .route("/dashboard", get(crate::admin::dashboard))
+        .route("/settings", get(crate::admin::get_settings).post(crate::admin::update_settings));
 
     let static_service = ServeDir::new(&config.frontend_dist)
         .not_found_service(ServeFile::new(config.frontend_dist.join("index.html")));
 
     Router::new()
         .nest("/api", api)
+        .route("/v1/chat/completions", post(gateway::openai_chat_completions))
         .route("/v1/responses", post(gateway::openai_responses))
         .route("/v1/messages", post(gateway::anthropic_messages))
         .fallback_service(static_service)

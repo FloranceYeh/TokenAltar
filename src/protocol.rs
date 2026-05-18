@@ -8,6 +8,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientProtocol {
+    OpenAiChatCompletions,
     OpenAiResponses,
     AnthropicMessages,
 }
@@ -34,10 +35,61 @@ pub struct GeneralMessage {
 
 impl GeneralOpenAIRequest {
     pub fn estimated_input_tokens(&self) -> i64 {
-        estimate_tokens(
-            &serde_json::to_string(self).unwrap_or_else(|_| self.model.clone()),
-        )
+        crate::tokenizer::estimate_request_tokens(self).tokens
     }
+}
+
+pub fn parse_openai_chat_completions(value: Value) -> AppResult<GeneralOpenAIRequest> {
+    reject_unsupported(&value, &["image_url", "input_audio", "reasoning"])?;
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::BadRequest("chat completions request requires model".to_string()))?
+        .to_string();
+    let stream = value.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let max_tokens = value
+        .get("max_completion_tokens")
+        .or_else(|| value.get("max_tokens"))
+        .and_then(Value::as_i64);
+    let temperature = value.get("temperature").and_then(Value::as_f64);
+    let mut system_parts = Vec::new();
+    let mut messages = Vec::new();
+    for message in value
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::BadRequest("chat completions request requires messages[]".to_string()))?
+    {
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user")
+            .to_string();
+        let content = openai_input_content_to_text(message.get("content"))?;
+        if role == "system" {
+            system_parts.push(content);
+            continue;
+        }
+        messages.push(GeneralMessage {
+            role,
+            content,
+            tool_calls: message.get("tool_calls").cloned(),
+            tool_call_id: message.get("tool_call_id").and_then(Value::as_str).map(ToString::to_string),
+        });
+    }
+    Ok(GeneralOpenAIRequest {
+        model,
+        messages,
+        system: if system_parts.is_empty() {
+            None
+        } else {
+            Some(system_parts.join("\n"))
+        },
+        max_tokens,
+        temperature,
+        stream,
+        tools: value.get("tools").cloned(),
+        tool_choice: value.get("tool_choice").cloned(),
+    })
 }
 
 pub fn parse_openai_responses(value: Value) -> AppResult<GeneralOpenAIRequest> {
@@ -170,6 +222,71 @@ pub fn general_to_openai_responses(request: &GeneralOpenAIRequest, stream: bool)
     body
 }
 
+pub fn response_to_chat_completions(value: Value) -> (Value, Usage) {
+    let usage = extract_usage(&value);
+    let text = openai_output_text(&value)
+        .or_else(|| {
+            value
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+        })
+        .unwrap_or_default();
+    (
+        json!({
+            "id": value.get("id").cloned().unwrap_or_else(|| json!("chatcmpl_local")),
+            "object": "chat.completion",
+            "model": value.get("model").cloned().unwrap_or(Value::Null),
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": usage.input_tokens,
+                "completion_tokens": usage.output_tokens,
+                "total_tokens": usage.total()
+            }
+        }),
+        usage,
+    )
+}
+
+pub fn chat_completion_chunk_to_responses_chunk(value: &Value) -> Option<Value> {
+    let choice = value.get("choices")?.as_array()?.first()?;
+    let delta = choice.get("delta")?;
+    if let Some(content) = delta.get("content").and_then(Value::as_str) {
+        return Some(json!({
+            "type": "response.output_text.delta",
+            "delta": content,
+        }));
+    }
+    None
+}
+
+pub fn responses_chunk_to_chat_completion_chunk(value: &Value, model: &str) -> Option<Value> {
+    let event_type = value.get("type").and_then(Value::as_str)?;
+    if event_type == "response.output_text.delta" {
+        return Some(json!({
+            "id": value.get("response_id").cloned().unwrap_or_else(|| json!("chatcmpl_stream")),
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": value.get("delta").and_then(Value::as_str).unwrap_or("")},
+                "finish_reason": null
+            }]
+        }));
+    }
+    None
+}
+
 pub fn general_to_anthropic_messages(request: &GeneralOpenAIRequest, stream: bool) -> Value {
     let messages = request
         .messages
@@ -254,7 +371,7 @@ pub fn response_to_anthropic(value: Value) -> (Value, Usage) {
     if value.get("content").is_some() && value.get("type").and_then(Value::as_str) == Some("message") {
         return (value, usage);
     }
-    let text = openai_output_text(&value);
+    let text = openai_output_text(&value).unwrap_or_default();
     (
         json!({
             "id": value.get("id").cloned().unwrap_or_else(|| json!("msg_local")),
@@ -298,13 +415,7 @@ pub fn extract_usage(value: &Value) -> Usage {
     }
 }
 
-pub fn estimate_tokens(text: &str) -> i64 {
-    // A conservative local estimate that keeps the gateway dependency-light for Anthropic
-    // while still preventing obvious negative-balance abuse before upstream usage arrives.
-    ((text.chars().count() as f64) / 3.2).ceil().max(1.0) as i64
-}
-
-pub fn openai_output_text(value: &Value) -> String {
+pub fn openai_output_text(value: &Value) -> Option<String> {
     value
         .get("output")
         .and_then(Value::as_array)
@@ -333,7 +444,6 @@ pub fn openai_output_text(value: &Value) -> String {
                 .and_then(Value::as_str)
                 .map(ToString::to_string)
         })
-        .unwrap_or_default()
 }
 
 fn parse_responses_input(input: Option<&Value>) -> AppResult<Vec<GeneralMessage>> {

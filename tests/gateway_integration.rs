@@ -90,6 +90,84 @@ async fn anthropic_messages_gateway_converts_response_shape() {
     assert_eq!(value["content"][0]["text"], "anthropic ok");
 }
 
+#[tokio::test]
+async fn chat_completions_gateway_converts_response_shape_and_records_tokenizer() {
+    let upstream = spawn_upstream(json!({
+        "id": "resp_test",
+        "model": "gpt-4o-mini",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "chat ok"}]}],
+        "usage": {"input_tokens": 9, "output_tokens": 5}
+    }))
+    .await;
+    let (state, token) = setup_state(upstream).await;
+    let app = build_router(state.clone(), &test_config("unused"));
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::from(
+                    json!({
+                        "model": "gpt-4o-mini",
+                        "messages": [
+                            {"role": "system", "content": "short"},
+                            {"role": "user", "content": "hello"}
+                        ],
+                        "stream": false
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["object"], "chat.completion");
+    assert_eq!(value["choices"][0]["message"]["content"], "chat ok");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let ledger = state.db.list_ledger(None).await.unwrap();
+    assert_eq!(ledger[0]["tokenizer"], "o200k_base");
+}
+
+#[tokio::test]
+async fn exhausted_channel_is_marked_unavailable() {
+    let upstream = spawn_upstream(json!({
+        "id": "resp_test",
+        "model": "gpt-test",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        "usage": {"input_tokens": 12, "output_tokens": 4}
+    }))
+    .await;
+    let (state, token) = setup_state(upstream).await;
+    sqlx::query("UPDATE channel_limits SET used_cycle_tokens = cycle_limit_tokens WHERE channel_id = 1")
+        .execute(&state.db.pool)
+        .await
+        .unwrap();
+    state.db.refresh_channel_windows().await.unwrap();
+    let app = build_router(state, &test_config("unused"));
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/responses")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::from(
+                    json!({"model": "gpt-test", "input": "hello"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 async fn setup_state(upstream: String) -> (AppState, String) {
     let config = test_config("sqlite::memory:");
     let state = AppState::new(&config).await.unwrap();

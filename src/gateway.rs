@@ -18,13 +18,34 @@ use crate::{
     auth::GatewayAuth,
     error::{AppError, AppResult},
     models::{GatewayContext, LedgerEvent, ProviderKind, Usage},
-    pricing::{fire_sale_discount, reserve_cost, select_price, settle},
+    pricing::{fire_sale_discount, select_price, settle},
     protocol::{
-        ClientProtocol, extract_usage, general_to_anthropic_messages, general_to_openai_responses,
-        parse_anthropic_messages, parse_openai_responses, response_to_anthropic, response_to_openai,
+        ClientProtocol, chat_completion_chunk_to_responses_chunk, extract_usage,
+        general_to_anthropic_messages, general_to_openai_responses, parse_anthropic_messages,
+        parse_openai_chat_completions, parse_openai_responses, response_to_anthropic,
+        response_to_chat_completions, response_to_openai, responses_chunk_to_chat_completion_chunk,
     },
     routing::{RouteDecision, choose_channel},
 };
+
+pub async fn openai_chat_completions(
+    State(state): State<AppState>,
+    GatewayAuth(auth): GatewayAuth,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> AppResult<Response> {
+    let request = parse_openai_chat_completions(body.clone())?;
+    handle_gateway(
+        state,
+        auth,
+        headers,
+        body,
+        request,
+        ClientProtocol::OpenAiChatCompletions,
+        "/v1/chat/completions",
+    )
+    .await
+}
 
 pub async fn openai_responses(
     State(state): State<AppState>,
@@ -74,9 +95,11 @@ async fn handle_gateway(
     request_path: &str,
 ) -> AppResult<Response> {
     let api_key = auth.api_key.clone().ok_or(AppError::Unauthorized)?;
+    state.db.refresh_channel_windows().await?;
     let prices = state.db.list_prices().await?;
     let price = select_price(&request.model, &prices);
-    let reserve = reserve_cost(&serde_json::to_string(&raw_body).unwrap_or_default(), &price);
+    let token_estimate = crate::tokenizer::estimate_request_tokens(&request);
+    let reserve = token_estimate.tokens as f64 * price.input_price_per_1k / 1000.0;
     if auth.user.points_balance < reserve {
         return Err(AppError::BadRequest("insufficient points for estimated input tokens".to_string()));
     }
@@ -213,6 +236,7 @@ async fn finish_response(
         return Ok((status, Json(value)).into_response());
     }
     let (body, usage) = match finish.client_protocol {
+        ClientProtocol::OpenAiChatCompletions => response_to_chat_completions(value),
         ClientProtocol::OpenAiResponses => response_to_openai(value),
         ClientProtocol::AnthropicMessages => response_to_anthropic(value),
     };
@@ -265,6 +289,12 @@ async fn finish_streaming_response(
                 Ok(bytes) => {
                     merge_usage_from_sse(&bytes, &mut usage);
                     buffer.extend_from_slice(&bytes);
+                    let bytes = translate_stream_chunk(
+                        bytes,
+                        finish_for_stream.decision.channel.provider.clone(),
+                        &finish_for_stream.client_protocol,
+                        &finish_for_stream.request.model,
+                    );
                     yield Ok::<Bytes, std::io::Error>(bytes);
                 }
                 Err(err) => {
@@ -332,7 +362,7 @@ async fn enqueue_ledger(
         channel_id: ctx.decision.channel.id,
         provider_user_id: ctx.decision.channel.owner_user_id,
         model: ctx.request.model.clone(),
-        tokenizer: "tokenaltar-local-estimator".to_string(),
+        tokenizer: crate::tokenizer::estimate_request_tokens(ctx.request).tokenizer,
         usage,
         price: ctx.price,
         surge_multiplier,
@@ -397,5 +427,75 @@ fn merge_usage_from_sse(bytes: &Bytes, usage: &mut Usage) {
                 *usage = parsed;
             }
         }
+    }
+}
+
+fn translate_stream_chunk(bytes: Bytes, from: ProviderKind, to: &ClientProtocol, model: &str) -> Bytes {
+    let text = String::from_utf8_lossy(&bytes);
+    let mut translated = String::new();
+    let mut changed = false;
+    for line in text.lines() {
+        if let Some(data) = line.strip_prefix("data:") {
+            let data = data.trim();
+            if data == "[DONE]" || data.is_empty() {
+                translated.push_str(line);
+                translated.push('\n');
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(data) {
+                let mapped = match (from.clone(), to) {
+                    (ProviderKind::OpenAi, ClientProtocol::OpenAiChatCompletions) => {
+                        responses_chunk_to_chat_completion_chunk(&value, model)
+                    }
+                    (ProviderKind::Anthropic, ClientProtocol::OpenAiResponses) => {
+                        anthropic_stream_text_delta(&value).map(|delta| {
+                            serde_json::json!({"type": "response.output_text.delta", "delta": delta})
+                        })
+                    }
+                    (ProviderKind::Anthropic, ClientProtocol::OpenAiChatCompletions) => {
+                        anthropic_stream_text_delta(&value).map(|delta| {
+                            serde_json::json!({
+                                "object": "chat.completion.chunk",
+                                "model": model,
+                                "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": null}]
+                            })
+                        })
+                    }
+                    (ProviderKind::OpenAi, ClientProtocol::AnthropicMessages) => {
+                        chat_completion_chunk_to_responses_chunk(&value).or_else(|| {
+                            value.get("delta").and_then(Value::as_str).map(|delta| {
+                                serde_json::json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": delta}})
+                            })
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(mapped) = mapped {
+                    translated.push_str("data: ");
+                    translated.push_str(&mapped.to_string());
+                    translated.push_str("\n\n");
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        translated.push_str(line);
+        translated.push('\n');
+    }
+    if changed {
+        Bytes::from(translated)
+    } else {
+        bytes
+    }
+}
+
+fn anthropic_stream_text_delta(value: &Value) -> Option<&str> {
+    if value.get("type").and_then(Value::as_str) == Some("content_block_delta") {
+        value
+            .get("delta")
+            .and_then(|delta| delta.get("text"))
+            .and_then(Value::as_str)
+    } else {
+        None
     }
 }

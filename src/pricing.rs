@@ -2,7 +2,7 @@ use regex::Regex;
 
 use crate::{
     models::{Channel, ModelPrice, Usage},
-    protocol::estimate_tokens,
+    tokenizer::estimate_text_tokens,
 };
 
 #[derive(Debug, Clone)]
@@ -68,7 +68,7 @@ pub fn settle(
 }
 
 pub fn reserve_cost(text: &str, price: &ModelPrice) -> f64 {
-    estimate_tokens(text) as f64 * price.input_price_per_1k / 1000.0
+    estimate_text_tokens("default", text).tokens as f64 * price.input_price_per_1k / 1000.0
 }
 
 pub fn fire_sale_discount(channel: &Channel) -> f64 {
