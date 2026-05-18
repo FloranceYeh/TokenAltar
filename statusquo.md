@@ -77,3 +77,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** SQLite affinity bindings remain the source of truth; the cache now mirrors DB TTL instead of treating a cached channel ID as permanent.
+
+## [2026-05-18 22:34] Rolling Surge Window Fix
+- **Changes:** Replaced the permanent surge token counter with a rolling one-hour in-memory token window using minute buckets.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Surge pricing now bases its load ratio on recent gateway settlements instead of all settlements since process start.
