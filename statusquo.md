@@ -101,3 +101,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Runtime cost scales linearly with configured windows because every gateway reservation checks all channel windows atomically.
+
+## [2026-05-18 23:41] Role Aware Console UI
+- **Changes:** Hid admin-only Affinity navigation from regular users, adjusted user-facing channel/pricing copy, guarded regular-user price saves without a channel, and added owner labels to admin channel/pricing tables.
+- **Status:** Completed
+- **Next Steps:** Add action-level error toasts and confirmations for destructive channel/key operations.
+- **Context:** Backend permissions are unchanged; this is a UI clarity pass over existing role boundaries.

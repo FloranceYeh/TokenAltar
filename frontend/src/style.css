@@ -1024,6 +1024,28 @@ td:first-child {
   color: var(--ink-muted);
 }
 
+.muted-row {
+  background: rgba(103, 85, 65, 0.05);
+}
+
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(39, 77, 110, 0.2);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: rgba(39, 77, 110, 0.08);
+  color: var(--lapis);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.scope-chip.fallback {
+  border-color: rgba(103, 85, 65, 0.22);
+  background: rgba(103, 85, 65, 0.08);
+  color: var(--ink-soft);
+}
+
 .empty-row {
   padding: 22px 14px;
   text-align: center;

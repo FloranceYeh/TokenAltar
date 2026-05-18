@@ -32,6 +32,7 @@ type TabId =
   | 'settings'
 
 type TabItem = [TabId, string]
+const adminOnlyTabs = new Set<TabId>(['affinity', 'settings'])
 
 const token = ref(localStorage.getItem('tokenaltar_token') || '')
 const user = ref<User | null>(null)
@@ -164,15 +165,34 @@ const tabs = computed<TabItem[]>(() => {
     ['keys', 'API Keys'],
     ['channels', 'Channels'],
     ['prices', 'Pricing'],
-    ['affinity', 'Affinity'],
     ['economy', 'Economy'],
     ['leaderboards', 'Leaderboards'],
     ['ledger', 'Ledger'],
   ]
-  if (isAdmin.value) items.push(['settings', 'Settings'])
+  if (isAdmin.value) {
+    items.splice(4, 0, ['affinity', 'Affinity'])
+    items.push(['settings', 'Settings'])
+  }
   return items
 })
-const activeTabMeta = computed(() => tabDetails[activeTab.value])
+const activeTabMeta = computed(() => {
+  const meta = tabDetails[activeTab.value]
+  if (!isAdmin.value && activeTab.value === 'channels') {
+    return {
+      ...meta,
+      title: 'My channels',
+      description: 'Manage your own upstream capacity, quotas, pricing inputs, and health checks.',
+    }
+  }
+  if (!isAdmin.value && activeTab.value === 'prices') {
+    return {
+      ...meta,
+      title: 'Channel pricing',
+      description: 'Set rates for your channels; admin-managed defaults remain visible as fallback rows.',
+    }
+  }
+  return meta
+})
 const editingApiKey = computed(() => apiKeys.value.find((item) => item.id === editingApiKeyId.value))
 const editingChannel = computed(() => channels.value.find((item) => item.id === editingChannelId.value))
 const filteredApiKeys = computed(() => {
@@ -197,6 +217,7 @@ const filteredChannels = computed(() => {
       channel.provider,
       channel.status,
       channel.base_url,
+      isAdmin.value ? ownerLabel(channel) : '',
       ...(channel.models || []),
     ].join(' ').toLowerCase()
     return haystack.includes(needle)
@@ -214,6 +235,7 @@ const dashboardMetrics = computed(() => [
   { label: 'Enabled channels', value: `${dashboard.value?.enabled_channels || 0} / ${dashboard.value?.channels || 0}`, detail: 'online capacity' },
   { label: 'Today spend', value: fmt(dashboard.value?.spent_points_today, 4), detail: 'points settled' },
 ])
+const priceSaveDisabled = computed(() => !isAdmin.value && !priceForm.channel_id)
 
 async function api(path: string, options: RequestInit = {}) {
   error.value = ''
@@ -259,6 +281,7 @@ async function acceptAuth(data: any) {
 function logout() {
   token.value = ''
   user.value = null
+  activeTab.value = 'dashboard'
   localStorage.removeItem('tokenaltar_token')
 }
 
@@ -266,12 +289,17 @@ async function refreshAll() {
   if (!token.value) return
   try {
     user.value = await api('/me')
+    ensureAllowedTab()
+    if (!isAdmin.value) {
+      rules.value = []
+      settings.value = []
+    }
     await Promise.all([
       loadDashboard(),
       loadApiKeys(),
       loadChannels(),
       loadPrices(),
-      loadRules(),
+      isAdmin.value ? loadRules() : Promise.resolve(),
       loadLedger(),
       loadTransfers(),
       loadRedPackets(),
@@ -288,7 +316,9 @@ async function loadDashboard() { dashboard.value = await api('/dashboard') }
 async function loadApiKeys() { apiKeys.value = await api('/api-keys') }
 async function loadChannels() {
   channels.value = await api('/channels')
-  if (!isAdmin.value && !priceForm.channel_id && channels.value.length > 0) {
+  if (!isAdmin.value && channels.value.length === 0) {
+    priceForm.channel_id = null
+  } else if (!isAdmin.value && !channels.value.some((channel) => channel.id === priceForm.channel_id)) {
     priceForm.channel_id = channels.value[0].id
   }
 }
@@ -538,13 +568,42 @@ function toggleFilteredChannels() {
 }
 
 async function savePrice() {
+  if (priceSaveDisabled.value) {
+    error.value = 'Add a channel before setting channel-specific prices.'
+    return
+  }
   await api('/prices', { method: 'POST', body: JSON.stringify(priceForm) })
   await loadPrices()
 }
 
 function priceScope(price: any) {
-  if (!price.channel_id) return 'Global'
-  return channels.value.find((channel) => channel.id === price.channel_id)?.name || `Channel #${price.channel_id}`
+  if (!price.channel_id) return isAdmin.value ? 'Global default' : 'Default fallback'
+  const channel = channels.value.find((item) => item.id === price.channel_id)
+  return channel ? channelOptionLabel(channel) : `Channel #${price.channel_id}`
+}
+
+function isGlobalPrice(price: any) {
+  return !price.channel_id
+}
+
+function ownerLabel(record: any) {
+  return record?.owner_user_id ? `User #${record.owner_user_id}` : '-'
+}
+
+function channelOptionLabel(channel: any) {
+  return isAdmin.value ? `${channel.name} (${ownerLabel(channel)})` : channel.name
+}
+
+function priceOwnerLabel(price: any) {
+  if (!price.channel_id) return 'System'
+  const channel = channels.value.find((item) => item.id === price.channel_id)
+  return channel ? ownerLabel(channel) : '-'
+}
+
+function ensureAllowedTab() {
+  if (user.value && adminOnlyTabs.has(activeTab.value) && !isAdmin.value) {
+    activeTab.value = 'dashboard'
+  }
 }
 
 async function createRule() {
@@ -853,7 +912,7 @@ onMounted(refreshAll)
           <div class="toolbar">
             <div>
               <h3>{{ editingChannel ? 'Edit upstream capacity' : 'Add upstream capacity' }}</h3>
-              <p>Lifecycle controls mirror production gateways: edit, test, clone, disable, and retire channels.</p>
+              <p>{{ isAdmin ? 'Global operator view across every owner channel.' : 'Your upstream pools only; admins can still operate globally.' }}</p>
             </div>
             <div class="toolbar-actions">
               <button class="ghost" @click="resetChannelForm">New</button>
@@ -905,7 +964,7 @@ onMounted(refreshAll)
               <strong>{{ filteredChannels.length }}</strong>
               <span>{{ selectedChannelIds.length }} selected</span>
             </div>
-            <input v-model="channelFilter" class="search-input" placeholder="Filter channels, providers, models" />
+            <input v-model="channelFilter" class="search-input" :placeholder="isAdmin ? 'Filter channels, owners, providers, models' : 'Filter channels, providers, models'" />
             <button class="ghost" :disabled="filteredChannels.length === 0" @click="toggleFilteredChannels">
               {{ allFilteredChannelsSelected ? 'Clear Visible' : 'Select Visible' }}
             </button>
@@ -916,13 +975,14 @@ onMounted(refreshAll)
             <table class="management-table">
               <thead>
                 <tr>
-                  <th></th><th>Name</th><th>Provider</th><th>Status</th><th>Primary Left</th><th>Windows</th><th>Models</th><th>Health</th><th>Actions</th>
+                  <th></th><th>Name</th><th v-if="isAdmin">Owner</th><th>Provider</th><th>Status</th><th>Primary Left</th><th>Windows</th><th>Models</th><th>Health</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="channel in filteredChannels" :key="channel.id" :class="{ selected: editingChannelId === channel.id }">
                   <td class="select-cell"><input v-model="selectedChannelIds" type="checkbox" :value="channel.id" /></td>
                   <td><button class="link-button" @click="selectChannel(channel)">{{ channel.name }}</button></td>
+                  <td v-if="isAdmin" class="muted-cell">{{ ownerLabel(channel) }}</td>
                   <td>{{ channel.provider }}</td>
                   <td><span class="status" :class="statusClass(channel)">{{ channel.status }}</span></td>
                   <td class="nowrap">{{ primaryWindow(channel) ? fmt(primaryWindow(channel).limit_tokens - primaryWindow(channel).used_tokens, 0) : '-' }}</td>
@@ -939,7 +999,7 @@ onMounted(refreshAll)
                   </td>
                 </tr>
                 <tr v-if="filteredChannels.length === 0">
-                  <td colspan="9" class="empty-row">No channels match the current filter.</td>
+                  <td :colspan="isAdmin ? 10 : 9" class="empty-row">No channels match the current filter.</td>
                 </tr>
               </tbody>
             </table>
@@ -947,16 +1007,39 @@ onMounted(refreshAll)
         </section>
 
         <section v-if="activeTab === 'prices'">
-          <div class="toolbar"><div><h3>Settle model cost</h3><p>Channel prices override global model defaults.</p></div><button @click="savePrice">Save</button></div>
+          <div class="toolbar">
+            <div>
+              <h3>Settle model cost</h3>
+              <p>{{ isAdmin ? 'Channel prices override global model defaults.' : 'Your channel prices override the visible default fallback rows.' }}</p>
+            </div>
+            <button :disabled="priceSaveDisabled" @click="savePrice">Save</button>
+          </div>
           <div class="form-grid compact panel">
-            <label>Scope <select v-model="priceForm.channel_id"><option v-if="isAdmin" :value="null">Global default</option><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select></label>
+            <label>Scope <select v-model="priceForm.channel_id" :disabled="!isAdmin && channels.length === 0"><option v-if="isAdmin" :value="null">Global default</option><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channelOptionLabel(channel) }}</option></select></label>
             <label>Model Pattern <input v-model="priceForm.model_pattern" /></label>
             <label>Input / 1k <input v-model.number="priceForm.input_price_per_1k" type="number" step="0.01" /></label>
             <label>Output / 1k <input v-model.number="priceForm.output_price_per_1k" type="number" step="0.01" /></label>
             <label>Cache / 1k <input v-model.number="priceForm.cache_price_per_1k" type="number" step="0.01" /></label>
           </div>
           <div class="table-shell">
-            <table><tbody><tr v-for="price in prices" :key="`${price.channel_id || 'global'}:${price.model_pattern}`"><td>{{ priceScope(price) }}</td><td>{{ price.model_pattern }}</td><td>{{ price.input_price_per_1k }}</td><td>{{ price.output_price_per_1k }}</td><td>{{ price.cache_price_per_1k }}</td></tr></tbody></table>
+            <table>
+              <thead>
+                <tr><th>Scope</th><th v-if="isAdmin">Owner</th><th>Model</th><th>Input / 1k</th><th>Output / 1k</th><th>Cache / 1k</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="price in prices" :key="`${price.channel_id || 'global'}:${price.model_pattern}`" :class="{ 'muted-row': !isAdmin && isGlobalPrice(price) }">
+                  <td><span class="scope-chip" :class="{ fallback: isGlobalPrice(price) }">{{ priceScope(price) }}</span></td>
+                  <td v-if="isAdmin" class="muted-cell">{{ priceOwnerLabel(price) }}</td>
+                  <td>{{ price.model_pattern }}</td>
+                  <td>{{ price.input_price_per_1k }}</td>
+                  <td>{{ price.output_price_per_1k }}</td>
+                  <td>{{ price.cache_price_per_1k }}</td>
+                </tr>
+                <tr v-if="prices.length === 0">
+                  <td :colspan="isAdmin ? 6 : 5" class="empty-row">No pricing rules configured.</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
