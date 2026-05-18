@@ -1,6 +1,6 @@
-use std::{str::FromStr, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 
-use chrono::{DateTime, Datelike, Local, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,8 @@ use crate::{
     auth::{generate_token, hash_password, hash_token},
     error::{AppError, AppResult},
     models::{
-        AffinityRule, ApiKeyRecord, Channel, ChannelLimits, GatewayReservation, LedgerEvent,
-        ModelPrice, PublicChannel, User, json_array_to_strings,
+        AffinityRule, ApiKeyRecord, Channel, ChannelLimits, ChannelQuotaWindow,
+        GatewayReservation, LedgerEvent, ModelPrice, PublicChannel, User, json_array_to_strings,
     },
 };
 
@@ -433,33 +433,39 @@ impl Database {
             ));
         }
 
-        let channel_debit = sqlx::query(
+        let quota_window_count: (i64,) = sqlx::query_as(
             r#"
-            UPDATE channel_limits
-            SET used_cycle_tokens = used_cycle_tokens + ?,
-                used_day_tokens = used_day_tokens + ?,
-                used_hour_tokens = used_hour_tokens + ?,
-                updated_at = datetime('now')
+            SELECT COUNT(*)
+            FROM channel_quota_windows
             WHERE channel_id = ?
-              AND used_cycle_tokens + ? <= cycle_limit_tokens
-              AND used_day_tokens + ? <= daily_limit_tokens
-              AND used_hour_tokens + ? <= hourly_limit_tokens
+              AND used_tokens + ? <= limit_tokens
             "#,
         )
-        .bind(tokens)
-        .bind(tokens)
-        .bind(tokens)
         .bind(channel_id)
         .bind(tokens)
-        .bind(tokens)
-        .bind(tokens)
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
-        if channel_debit.rows_affected() == 0 {
+        let expected_window_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM channel_quota_windows WHERE channel_id = ?")
+                .bind(channel_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if expected_window_count.0 == 0 || quota_window_count.0 != expected_window_count.0 {
             return Err(AppError::BadRequest(
                 "channel token quota no longer has enough room for the estimate".to_string(),
             ));
         }
+        sqlx::query(
+            r#"
+            UPDATE channel_quota_windows
+            SET used_tokens = used_tokens + ?, updated_at = datetime('now')
+            WHERE channel_id = ?
+            "#,
+        )
+        .bind(tokens)
+        .bind(channel_id)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(GatewayReservation {
@@ -488,16 +494,11 @@ impl Database {
             .await?;
         sqlx::query(
             r#"
-            UPDATE channel_limits
-            SET used_cycle_tokens = MAX(0, used_cycle_tokens - ?),
-                used_day_tokens = MAX(0, used_day_tokens - ?),
-                used_hour_tokens = MAX(0, used_hour_tokens - ?),
-                updated_at = datetime('now')
+            UPDATE channel_quota_windows
+            SET used_tokens = MAX(0, used_tokens - ?), updated_at = datetime('now')
             WHERE channel_id = ?
             "#,
         )
-        .bind(reservation.tokens)
-        .bind(reservation.tokens)
         .bind(reservation.tokens)
         .bind(reservation.channel_id)
         .execute(&mut *tx)
@@ -511,8 +512,6 @@ impl Database {
             r#"
             SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                    c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
-                   l.cycle_limit_tokens, l.cycle_reset_day, l.daily_limit_tokens, l.hourly_limit_tokens,
-                   l.used_cycle_tokens, l.used_day_tokens, l.used_hour_tokens,
                    l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
             FROM channels c JOIN channel_limits l ON c.id = l.channel_id
             WHERE c.deleted_at IS NULL
@@ -521,7 +520,43 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await?;
-        rows.iter().map(channel_from_row).collect()
+        let windows = self.windows_by_channel().await?;
+        rows.iter()
+            .map(|row| channel_from_row(row, &windows))
+            .collect()
+    }
+
+    async fn windows_by_channel(&self) -> AppResult<HashMap<i64, Vec<ChannelQuotaWindow>>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, channel_id, name, limit_tokens, used_tokens, period_unit, period_count,
+                   anchor_at, timezone, current_window_start_at, current_window_end_at, sort_order
+            FROM channel_quota_windows
+            ORDER BY channel_id, sort_order, id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut windows: HashMap<i64, Vec<ChannelQuotaWindow>> = HashMap::new();
+        for row in rows {
+            windows
+                .entry(row.get("channel_id"))
+                .or_default()
+                .push(ChannelQuotaWindow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    limit_tokens: row.get("limit_tokens"),
+                    used_tokens: row.get("used_tokens"),
+                    period_unit: row.get("period_unit"),
+                    period_count: row.get("period_count"),
+                    anchor_at: row.get("anchor_at"),
+                    timezone: row.get("timezone"),
+                    current_window_start_at: row.get("current_window_start_at"),
+                    current_window_end_at: row.get("current_window_end_at"),
+                    sort_order: row.get("sort_order"),
+                });
+        }
+        Ok(windows)
     }
 
     pub async fn list_public_channels(&self, user: &User) -> AppResult<Vec<PublicChannel>> {
@@ -530,8 +565,6 @@ impl Database {
                 r#"
                 SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                        c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
-                       l.cycle_limit_tokens, l.cycle_reset_day, l.daily_limit_tokens, l.hourly_limit_tokens,
-                       l.used_cycle_tokens, l.used_day_tokens, l.used_hour_tokens,
                        l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
                 FROM channels c JOIN channel_limits l ON c.id = l.channel_id
                 WHERE c.deleted_at IS NULL
@@ -545,8 +578,6 @@ impl Database {
                 r#"
                 SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                        c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
-                       l.cycle_limit_tokens, l.cycle_reset_day, l.daily_limit_tokens, l.hourly_limit_tokens,
-                       l.used_cycle_tokens, l.used_day_tokens, l.used_hour_tokens,
                        l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
                 FROM channels c JOIN channel_limits l ON c.id = l.channel_id
                 WHERE c.owner_user_id = ? AND c.deleted_at IS NULL
@@ -557,8 +588,9 @@ impl Database {
             .fetch_all(&self.pool)
             .await?
         };
+        let windows = self.windows_by_channel().await?;
         rows.iter()
-            .map(channel_from_row)
+            .map(|row| channel_from_row(row, &windows))
             .map(|result| result.map(PublicChannel::from))
             .collect()
     }
@@ -588,22 +620,18 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO channel_limits(
-              channel_id, cycle_limit_tokens, cycle_reset_day, daily_limit_tokens, hourly_limit_tokens,
-              fire_sale_days_before, fire_sale_remaining_pct, fire_sale_discount, provider_share
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              channel_id, fire_sale_days_before, fire_sale_remaining_pct, fire_sale_discount, provider_share
+            ) VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(channel_id)
-        .bind(input.cycle_limit_tokens)
-        .bind(input.cycle_reset_day)
-        .bind(input.daily_limit_tokens)
-        .bind(input.hourly_limit_tokens)
         .bind(input.fire_sale_days_before)
         .bind(input.fire_sale_remaining_pct)
         .bind(input.fire_sale_discount)
         .bind(input.provider_share)
         .execute(&mut *tx)
         .await?;
+        upsert_quota_windows(&mut tx, channel_id, &input.windows, false).await?;
         tx.commit().await?;
         self.get_channel(channel_id).await
     }
@@ -613,8 +641,6 @@ impl Database {
             r#"
             SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                    c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
-                   l.cycle_limit_tokens, l.cycle_reset_day, l.daily_limit_tokens, l.hourly_limit_tokens,
-                   l.used_cycle_tokens, l.used_day_tokens, l.used_hour_tokens,
                    l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
             FROM channels c JOIN channel_limits l ON c.id = l.channel_id
             WHERE c.id = ? AND c.deleted_at IS NULL
@@ -624,7 +650,8 @@ impl Database {
         .fetch_optional(&self.pool)
         .await?
         .ok_or(AppError::NotFound)?;
-        channel_from_row(&row)
+        let windows = self.windows_by_channel().await?;
+        channel_from_row(&row, &windows)
     }
 
     pub async fn update_channel(
@@ -667,16 +694,11 @@ impl Database {
         sqlx::query(
             r#"
             UPDATE channel_limits
-            SET cycle_limit_tokens = ?, cycle_reset_day = ?, daily_limit_tokens = ?, hourly_limit_tokens = ?,
-                fire_sale_days_before = ?, fire_sale_remaining_pct = ?, fire_sale_discount = ?,
+            SET fire_sale_days_before = ?, fire_sale_remaining_pct = ?, fire_sale_discount = ?,
                 provider_share = ?, updated_at = datetime('now')
             WHERE channel_id = ?
             "#,
         )
-        .bind(input.cycle_limit_tokens)
-        .bind(input.cycle_reset_day)
-        .bind(input.daily_limit_tokens)
-        .bind(input.hourly_limit_tokens)
         .bind(input.fire_sale_days_before)
         .bind(input.fire_sale_remaining_pct)
         .bind(input.fire_sale_discount)
@@ -684,6 +706,7 @@ impl Database {
         .bind(id)
         .execute(&mut *tx)
         .await?;
+        upsert_quota_windows(&mut tx, id, &input.windows, true).await?;
         tx.commit().await?;
         self.get_channel(id).await.map(PublicChannel::from)
     }
@@ -788,10 +811,19 @@ impl Database {
             api_key_secret: existing.api_key_secret,
             models: existing.models,
             enabled: existing.enabled,
-            cycle_limit_tokens: existing.limits.cycle_limit_tokens,
-            cycle_reset_day: existing.limits.cycle_reset_day,
-            daily_limit_tokens: existing.limits.daily_limit_tokens,
-            hourly_limit_tokens: existing.limits.hourly_limit_tokens,
+            windows: existing
+                .limits
+                .windows
+                .iter()
+                .map(|window| ChannelQuotaWindowInput {
+                    name: window.name.clone(),
+                    limit_tokens: window.limit_tokens,
+                    period_unit: window.period_unit.clone(),
+                    period_count: window.period_count,
+                    anchor_at: window.anchor_at.clone(),
+                    timezone: window.timezone.clone(),
+                })
+                .collect(),
             fire_sale_days_before: existing.limits.fire_sale_days_before,
             fire_sale_remaining_pct: existing.limits.fire_sale_remaining_pct,
             fire_sale_discount: existing.limits.fire_sale_discount,
@@ -799,19 +831,23 @@ impl Database {
         };
         let clone = self.upsert_channel(existing.owner_user_id, input).await?;
         if !reset_usage {
-            sqlx::query(
-                r#"
-                UPDATE channel_limits
-                SET used_cycle_tokens = ?, used_day_tokens = ?, used_hour_tokens = ?
-                WHERE channel_id = ?
-                "#,
-            )
-            .bind(existing.limits.used_cycle_tokens)
-            .bind(existing.limits.used_day_tokens)
-            .bind(existing.limits.used_hour_tokens)
-            .bind(clone.id)
-            .execute(&self.pool)
-            .await?;
+            for (index, window) in existing.limits.windows.iter().enumerate() {
+                sqlx::query(
+                    r#"
+                    UPDATE channel_quota_windows
+                    SET used_tokens = ?, current_window_start_at = ?, current_window_end_at = ?,
+                        updated_at = datetime('now')
+                    WHERE channel_id = ? AND sort_order = ?
+                    "#,
+                )
+                .bind(window.used_tokens)
+                .bind(&window.current_window_start_at)
+                .bind(&window.current_window_end_at)
+                .bind(clone.id)
+                .bind(index as i64)
+                .execute(&self.pool)
+                .await?;
+            }
         }
         self.get_channel(clone.id).await.map(PublicChannel::from)
     }
@@ -928,52 +964,52 @@ impl Database {
 
     pub async fn refresh_channel_windows(&self) -> AppResult<()> {
         let now = Utc::now();
-        let today = now.date_naive().to_string();
-        let hour = now.format("%Y-%m-%dT%H").to_string();
-        let day = now.day() as i64;
-        sqlx::query(
+        let rows = sqlx::query(
             r#"
-            UPDATE channel_limits
-            SET used_day_tokens = 0, last_day_reset_at = ?
-            WHERE last_day_reset_at IS NULL OR substr(last_day_reset_at, 1, 10) != ?
+            SELECT id, period_unit, period_count, anchor_at, timezone,
+                   current_window_start_at, current_window_end_at
+            FROM channel_quota_windows
             "#,
         )
-        .bind(now.to_rfc3339())
-        .bind(&today)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
-        sqlx::query(
-            r#"
-            UPDATE channel_limits
-            SET used_hour_tokens = 0, last_hour_reset_at = ?
-            WHERE last_hour_reset_at IS NULL OR substr(last_hour_reset_at, 1, 13) != ?
-            "#,
-        )
-        .bind(now.to_rfc3339())
-        .bind(&hour)
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(
-            r#"
-            UPDATE channel_limits
-            SET used_cycle_tokens = 0, last_cycle_reset_at = ?
-            WHERE cycle_reset_day = ?
-              AND (last_cycle_reset_at IS NULL OR substr(last_cycle_reset_at, 1, 10) != ?)
-            "#,
-        )
-        .bind(now.to_rfc3339())
-        .bind(day)
-        .bind(&today)
-        .execute(&self.pool)
-        .await?;
+        for row in rows {
+            let window_id: i64 = row.get("id");
+            let current_end = parse_utc_rfc3339(&row.get::<String, _>("current_window_end_at"))?;
+            if now < current_end {
+                continue;
+            }
+            let definition = QuotaWindowDefinition {
+                period_unit: row.get("period_unit"),
+                period_count: row.get("period_count"),
+                anchor_at: row.get("anchor_at"),
+                timezone: row.get("timezone"),
+            };
+            let (start_at, end_at) = compute_window_bounds(&definition, now)?;
+            sqlx::query(
+                r#"
+                UPDATE channel_quota_windows
+                SET used_tokens = 0, current_window_start_at = ?, current_window_end_at = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                "#,
+            )
+            .bind(start_at.to_rfc3339())
+            .bind(end_at.to_rfc3339())
+            .bind(window_id)
+            .execute(&self.pool)
+            .await?;
+        }
         sqlx::query(
             r#"
             UPDATE channels
             SET status = CASE
                 WHEN deleted_at IS NOT NULL THEN status
                 WHEN enabled = 0 THEN status
-                WHEN (SELECT used_cycle_tokens >= cycle_limit_tokens FROM channel_limits WHERE channel_id = channels.id) THEN 'monthly_exhausted'
-                WHEN (SELECT used_day_tokens >= daily_limit_tokens OR used_hour_tokens >= hourly_limit_tokens FROM channel_limits WHERE channel_id = channels.id) THEN 'cooling'
+                WHEN EXISTS (
+                    SELECT 1 FROM channel_quota_windows
+                    WHERE channel_id = channels.id AND used_tokens >= limit_tokens
+                ) THEN 'cooling'
                 ELSE 'healthy'
               END,
               updated_at = datetime('now')
@@ -1163,16 +1199,11 @@ impl Database {
         let token_delta = event.usage.total() - event.reservation.tokens;
         sqlx::query(
             r#"
-            UPDATE channel_limits
-            SET used_cycle_tokens = MAX(0, used_cycle_tokens + ?),
-                used_day_tokens = MAX(0, used_day_tokens + ?),
-                used_hour_tokens = MAX(0, used_hour_tokens + ?),
-                updated_at = datetime('now')
+            UPDATE channel_quota_windows
+            SET used_tokens = MAX(0, used_tokens + ?), updated_at = datetime('now')
             WHERE channel_id = ?
             "#,
         )
-        .bind(token_delta)
-        .bind(token_delta)
         .bind(token_delta)
         .bind(event.channel_id)
         .execute(&mut *tx)
@@ -1234,9 +1265,15 @@ impl Database {
         .await?;
         let available_tokens: (i64,) = sqlx::query_as(
             r#"
-            SELECT COALESCE(SUM(l.cycle_limit_tokens - l.used_cycle_tokens), 0)
-            FROM channel_limits l JOIN channels c ON c.id = l.channel_id
+            SELECT COALESCE(SUM(w.limit_tokens - w.used_tokens), 0)
+            FROM channel_quota_windows w
+            JOIN channels c ON c.id = w.channel_id
             WHERE c.deleted_at IS NULL
+              AND w.sort_order = (
+                  SELECT MIN(w2.sort_order)
+                  FROM channel_quota_windows w2
+                  WHERE w2.channel_id = w.channel_id
+              )
             "#,
         )
         .fetch_one(&self.pool)
@@ -1587,10 +1624,7 @@ pub struct ChannelInput {
     pub api_key_secret: String,
     pub models: Vec<String>,
     pub enabled: bool,
-    pub cycle_limit_tokens: i64,
-    pub cycle_reset_day: i64,
-    pub daily_limit_tokens: i64,
-    pub hourly_limit_tokens: i64,
+    pub windows: Vec<ChannelQuotaWindowInput>,
     pub fire_sale_days_before: i64,
     pub fire_sale_remaining_pct: f64,
     pub fire_sale_discount: f64,
@@ -1605,14 +1639,21 @@ pub struct ChannelUpdateInput {
     pub api_key_secret: Option<String>,
     pub models: Vec<String>,
     pub enabled: bool,
-    pub cycle_limit_tokens: i64,
-    pub cycle_reset_day: i64,
-    pub daily_limit_tokens: i64,
-    pub hourly_limit_tokens: i64,
+    pub windows: Vec<ChannelQuotaWindowInput>,
     pub fire_sale_days_before: i64,
     pub fire_sale_remaining_pct: f64,
     pub fire_sale_discount: f64,
     pub provider_share: f64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChannelQuotaWindowInput {
+    pub name: String,
+    pub limit_tokens: i64,
+    pub period_unit: String,
+    pub period_count: i64,
+    pub anchor_at: String,
+    pub timezone: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1671,9 +1712,13 @@ fn api_key_from_row(row: &sqlx::sqlite::SqliteRow) -> ApiKeyRecord {
     }
 }
 
-fn channel_from_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<Channel> {
+fn channel_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+    windows_by_channel: &HashMap<i64, Vec<ChannelQuotaWindow>>,
+) -> AppResult<Channel> {
+    let channel_id = row.get("id");
     Ok(Channel {
-        id: row.get("id"),
+        id: channel_id,
         owner_user_id: row.get("owner_user_id"),
         name: row.get("name"),
         provider: crate::models::ProviderKind::try_from(row.get::<String, _>("provider").as_str())?,
@@ -1686,13 +1731,10 @@ fn channel_from_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<Channel> {
         upstream_latency_ms: row.get("upstream_latency_ms"),
         last_error: row.get("last_error"),
         limits: ChannelLimits {
-            cycle_limit_tokens: row.get("cycle_limit_tokens"),
-            cycle_reset_day: row.get("cycle_reset_day"),
-            daily_limit_tokens: row.get("daily_limit_tokens"),
-            hourly_limit_tokens: row.get("hourly_limit_tokens"),
-            used_cycle_tokens: row.get("used_cycle_tokens"),
-            used_day_tokens: row.get("used_day_tokens"),
-            used_hour_tokens: row.get("used_hour_tokens"),
+            windows: windows_by_channel
+                .get(&channel_id)
+                .cloned()
+                .unwrap_or_default(),
             fire_sale_days_before: row.get("fire_sale_days_before"),
             fire_sale_remaining_pct: row.get("fire_sale_remaining_pct"),
             fire_sale_discount: row.get("fire_sale_discount"),
@@ -1813,10 +1855,7 @@ fn validate_channel_input(input: &ChannelInput, require_key: bool) -> AppResult<
             None
         },
         &input.models,
-        input.cycle_limit_tokens,
-        input.cycle_reset_day,
-        input.daily_limit_tokens,
-        input.hourly_limit_tokens,
+        &input.windows,
         input.fire_sale_days_before,
         input.fire_sale_remaining_pct,
         input.fire_sale_discount,
@@ -1838,10 +1877,7 @@ fn validate_channel_update(input: &ChannelUpdateInput) -> AppResult<()> {
         &input.base_url,
         api_key_secret,
         &input.models,
-        input.cycle_limit_tokens,
-        input.cycle_reset_day,
-        input.daily_limit_tokens,
-        input.hourly_limit_tokens,
+        &input.windows,
         input.fire_sale_days_before,
         input.fire_sale_remaining_pct,
         input.fire_sale_discount,
@@ -1856,10 +1892,7 @@ fn validate_channel_fields(
     base_url: &str,
     api_key_secret: Option<&str>,
     models: &[String],
-    cycle_limit_tokens: i64,
-    cycle_reset_day: i64,
-    daily_limit_tokens: i64,
-    hourly_limit_tokens: i64,
+    windows: &[ChannelQuotaWindowInput],
     fire_sale_days_before: i64,
     fire_sale_remaining_pct: f64,
     fire_sale_discount: f64,
@@ -1888,21 +1921,7 @@ fn validate_channel_fields(
         ));
     }
     let _ = normalize_models_json(models)?;
-    if cycle_limit_tokens <= 0 || daily_limit_tokens <= 0 || hourly_limit_tokens <= 0 {
-        return Err(AppError::BadRequest(
-            "channel token limits must be positive".to_string(),
-        ));
-    }
-    if !(1..=28).contains(&cycle_reset_day) {
-        return Err(AppError::BadRequest(
-            "cycle reset day must be between 1 and 28".to_string(),
-        ));
-    }
-    if daily_limit_tokens > cycle_limit_tokens || hourly_limit_tokens > daily_limit_tokens {
-        return Err(AppError::BadRequest(
-            "hourly <= daily <= cycle limits must hold".to_string(),
-        ));
-    }
+    validate_quota_windows(windows)?;
     if fire_sale_days_before < 0
         || !fire_sale_remaining_pct.is_finite()
         || !(0.0..=1.0).contains(&fire_sale_remaining_pct)
@@ -1916,6 +1935,248 @@ fn validate_channel_fields(
         ));
     }
     Ok(())
+}
+
+fn validate_quota_windows(windows: &[ChannelQuotaWindowInput]) -> AppResult<()> {
+    if windows.is_empty() {
+        return Err(AppError::BadRequest(
+            "channel must define at least one quota window".to_string(),
+        ));
+    }
+    if windows.len() > 16 {
+        return Err(AppError::BadRequest(
+            "channel accepts at most 16 quota windows".to_string(),
+        ));
+    }
+    for window in windows {
+        let name = window.name.trim();
+        if name.is_empty() || name.chars().count() > 80 {
+            return Err(AppError::BadRequest(
+                "quota window name must be 1-80 characters".to_string(),
+            ));
+        }
+        if window.limit_tokens <= 0 || window.period_count <= 0 {
+            return Err(AppError::BadRequest(
+                "quota window limit and period count must be positive".to_string(),
+            ));
+        }
+        let definition = QuotaWindowDefinition {
+            period_unit: window.period_unit.clone(),
+            period_count: window.period_count,
+            anchor_at: window.anchor_at.clone(),
+            timezone: window.timezone.clone(),
+        };
+        let _ = compute_window_bounds(&definition, Utc::now())?;
+    }
+    Ok(())
+}
+
+struct QuotaWindowDefinition {
+    period_unit: String,
+    period_count: i64,
+    anchor_at: String,
+    timezone: String,
+}
+
+async fn upsert_quota_windows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    channel_id: i64,
+    windows: &[ChannelQuotaWindowInput],
+    replace_existing: bool,
+) -> AppResult<()> {
+    if replace_existing {
+        sqlx::query("DELETE FROM channel_quota_windows WHERE channel_id = ?")
+            .bind(channel_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    let now = Utc::now();
+    for (index, window) in windows.iter().enumerate() {
+        let definition = QuotaWindowDefinition {
+            period_unit: window.period_unit.trim().to_ascii_lowercase(),
+            period_count: window.period_count,
+            anchor_at: window.anchor_at.trim().to_string(),
+            timezone: window.timezone.trim().to_string(),
+        };
+        let (start_at, end_at) = compute_window_bounds(&definition, now)?;
+        sqlx::query(
+            r#"
+            INSERT INTO channel_quota_windows(
+              channel_id, name, limit_tokens, used_tokens, period_unit, period_count,
+              anchor_at, timezone, current_window_start_at, current_window_end_at, sort_order
+            ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(channel_id)
+        .bind(window.name.trim())
+        .bind(window.limit_tokens)
+        .bind(&definition.period_unit)
+        .bind(definition.period_count)
+        .bind(&definition.anchor_at)
+        .bind(&definition.timezone)
+        .bind(start_at.to_rfc3339())
+        .bind(end_at.to_rfc3339())
+        .bind(index as i64)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+fn compute_window_bounds(
+    definition: &QuotaWindowDefinition,
+    now: DateTime<Utc>,
+) -> AppResult<(DateTime<Utc>, DateTime<Utc>)> {
+    if definition.period_count <= 0 {
+        return Err(AppError::BadRequest(
+            "quota window period count must be positive".to_string(),
+        ));
+    }
+    let tz = parse_timezone(&definition.timezone)?;
+    let anchor = parse_local_anchor(&definition.anchor_at, tz)?;
+    let local_now = now.with_timezone(&tz);
+    let start = match definition.period_unit.as_str() {
+        "minute" => fixed_window_start(anchor, local_now, chrono::Duration::minutes(definition.period_count)),
+        "hour" => fixed_window_start(anchor, local_now, chrono::Duration::hours(definition.period_count)),
+        "day" => fixed_window_start(anchor, local_now, chrono::Duration::days(definition.period_count)),
+        "week" => fixed_window_start(anchor, local_now, chrono::Duration::weeks(definition.period_count)),
+        "month" => month_window_start(anchor, local_now, definition.period_count)?,
+        "year" => month_window_start(anchor, local_now, definition.period_count * 12)?,
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "unsupported quota window period unit: {other}"
+            )));
+        }
+    };
+    let end = advance_window(start, &definition.period_unit, definition.period_count)?;
+    Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
+}
+
+fn parse_timezone(timezone: &str) -> AppResult<Tz> {
+    timezone
+        .parse()
+        .map_err(|_| AppError::BadRequest(format!("invalid quota window timezone: {timezone}")))
+}
+
+fn parse_local_anchor(anchor_at: &str, timezone: Tz) -> AppResult<DateTime<Tz>> {
+    let normalized = anchor_at.trim();
+    if let Ok(utc_anchor) = DateTime::parse_from_rfc3339(normalized) {
+        return Ok(utc_anchor.with_timezone(&timezone));
+    }
+    let naive = NaiveDateTime::parse_from_str(normalized, "%Y-%m-%dT%H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(normalized, "%Y-%m-%d %H:%M:%S"))
+        .or_else(|_| {
+            NaiveDate::parse_from_str(normalized, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
+        })
+        .map_err(|_| {
+            AppError::BadRequest(
+                "quota window anchor_at must be an RFC3339 or local YYYY-MM-DDTHH:MM:SS timestamp"
+                    .to_string(),
+            )
+        })?;
+    resolve_local_datetime(timezone, naive)
+}
+
+fn resolve_local_datetime(timezone: Tz, naive: NaiveDateTime) -> AppResult<DateTime<Tz>> {
+    timezone.from_local_datetime(&naive).earliest().ok_or_else(|| {
+        AppError::BadRequest("quota window anchor falls into a nonexistent local time".to_string())
+    })
+}
+
+fn fixed_window_start(
+    anchor: DateTime<Tz>,
+    now: DateTime<Tz>,
+    duration: chrono::Duration,
+) -> DateTime<Tz> {
+    if now < anchor {
+        return anchor;
+    }
+    let elapsed = now.signed_duration_since(anchor);
+    let duration_seconds = duration.num_seconds().max(1);
+    let periods = elapsed.num_seconds().div_euclid(duration_seconds);
+    anchor + chrono::Duration::seconds(periods * duration_seconds)
+}
+
+fn month_window_start(
+    anchor: DateTime<Tz>,
+    now: DateTime<Tz>,
+    period_months: i64,
+) -> AppResult<DateTime<Tz>> {
+    if period_months <= 0 {
+        return Err(AppError::BadRequest(
+            "quota window period count must be positive".to_string(),
+        ));
+    }
+    if now < anchor {
+        return Ok(anchor);
+    }
+    let elapsed_months = (now.year() - anchor.year()) as i64 * 12 + now.month() as i64
+        - anchor.month() as i64;
+    let mut periods = elapsed_months.div_euclid(period_months).max(0);
+    let mut start = add_months_clamped(anchor, periods * period_months)?;
+    while advance_window(start, "month", period_months)? <= now {
+        periods += 1;
+        start = add_months_clamped(anchor, periods * period_months)?;
+    }
+    while start > now && periods > 0 {
+        periods -= 1;
+        start = add_months_clamped(anchor, periods * period_months)?;
+    }
+    Ok(start)
+}
+
+fn advance_window(
+    start: DateTime<Tz>,
+    period_unit: &str,
+    period_count: i64,
+) -> AppResult<DateTime<Tz>> {
+    match period_unit {
+        "minute" => Ok(start + chrono::Duration::minutes(period_count)),
+        "hour" => Ok(start + chrono::Duration::hours(period_count)),
+        "day" => Ok(start + chrono::Duration::days(period_count)),
+        "week" => Ok(start + chrono::Duration::weeks(period_count)),
+        "month" => add_months_clamped(start, period_count),
+        "year" => add_months_clamped(start, period_count * 12),
+        other => Err(AppError::BadRequest(format!(
+            "unsupported quota window period unit: {other}"
+        ))),
+    }
+}
+
+fn add_months_clamped(start: DateTime<Tz>, months: i64) -> AppResult<DateTime<Tz>> {
+    let month0 = start.month0() as i64 + months;
+    let year = start.year() + month0.div_euclid(12) as i32;
+    let month = month0.rem_euclid(12) as u32 + 1;
+    let max_day = days_in_month(year, month);
+    let day = start.day().min(max_day);
+    let naive = NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|date| {
+            date.and_hms_nano_opt(
+                start.hour(),
+                start.minute(),
+                start.second(),
+                start.nanosecond(),
+            )
+        })
+        .ok_or_else(|| AppError::BadRequest("invalid quota window boundary".to_string()))?;
+    resolve_local_datetime(start.timezone(), naive)
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).expect("valid month");
+    first_next.pred_opt().expect("previous day").day()
+}
+
+fn parse_utc_rfc3339(value: &str) -> AppResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|_| AppError::BadRequest("invalid stored quota window boundary".to_string()))
 }
 
 fn leaderboard_window_start(

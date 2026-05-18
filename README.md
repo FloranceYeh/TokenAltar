@@ -50,7 +50,8 @@ Model allow-lists accept exact model names and prefix wildcards such as `gpt-4o*
 Deleted keys are hidden and unusable, but ledger history remains intact.
 
 Channels are managed from `/api/channels`.
-Owners can edit provider, URL, model coverage, token buckets, fire-sale thresholds, provider share, and enabled state.
+Owners can edit provider, URL, model coverage, arbitrary quota windows, fire-sale thresholds, provider share, and enabled state.
+Each quota window defines a token limit, period unit/count, anchor timestamp, and IANA timezone; every configured window is enforced.
 When editing an existing channel, an empty `api_key_secret` keeps the stored upstream secret.
 The console also exposes channel clone, health test, per-row enable/disable, batch enable/disable, and soft delete operations.
 Health tests record `health_checked_at`, `upstream_latency_ms`, and `last_error` for operator visibility; they do not automatically disable routing.
@@ -58,7 +59,7 @@ Health tests record `health_checked_at`, `upstream_latency_ms`, and `last_error`
 ## Operational Notes
 
 - Channel token windows are refreshed on startup, dashboard/channel reads, and gateway requests.
-- Channel status moves to `monthly_exhausted` or `cooling` when cycle/day/hour buckets are exceeded.
+- Channel status moves to `cooling` when any configured quota window is exhausted.
 - Regular users can add and manage their own upstream channels. Console channel reads are owner-scoped for regular users and always redact upstream API keys.
 - Model prices are matched per channel first, then fall back to global model defaults managed by admins.
 - Invite-gated registration is controlled by `invite_required` and `invite_code_default` in the Settings tab.

@@ -75,10 +75,11 @@ const channelForm = reactive({
   api_key_secret: '',
   models: 'gpt-*,gpt-4o*',
   enabled: true,
-  cycle_limit_tokens: 1000000,
-  cycle_reset_day: 1,
-  daily_limit_tokens: 200000,
-  hourly_limit_tokens: 50000,
+  windows: [
+    { name: 'Monthly', limit_tokens: 1000000, period_unit: 'month', period_count: 1, anchor_at: defaultAnchor(), timezone: 'UTC' },
+    { name: 'Daily', limit_tokens: 200000, period_unit: 'day', period_count: 1, anchor_at: defaultAnchor(), timezone: 'UTC' },
+    { name: 'Hourly', limit_tokens: 50000, period_unit: 'hour', period_count: 1, anchor_at: defaultAnchor(), timezone: 'UTC' },
+  ],
   fire_sale_days_before: 3,
   fire_sale_remaining_pct: 0.25,
   fire_sale_discount: 0.2,
@@ -462,10 +463,7 @@ function selectChannel(channel: any) {
   channelForm.api_key_secret = ''
   channelForm.models = (channel.models || []).join(', ')
   channelForm.enabled = channel.enabled
-  channelForm.cycle_limit_tokens = channel.limits.cycle_limit_tokens
-  channelForm.cycle_reset_day = channel.limits.cycle_reset_day
-  channelForm.daily_limit_tokens = channel.limits.daily_limit_tokens
-  channelForm.hourly_limit_tokens = channel.limits.hourly_limit_tokens
+  channelForm.windows = cloneWindows(channel.limits.windows || [])
   channelForm.fire_sale_days_before = channel.limits.fire_sale_days_before
   channelForm.fire_sale_remaining_pct = channel.limits.fire_sale_remaining_pct
   channelForm.fire_sale_discount = channel.limits.fire_sale_discount
@@ -480,14 +478,51 @@ function resetChannelForm() {
   channelForm.api_key_secret = ''
   channelForm.models = 'gpt-*,gpt-4o*'
   channelForm.enabled = true
-  channelForm.cycle_limit_tokens = 1000000
-  channelForm.cycle_reset_day = 1
-  channelForm.daily_limit_tokens = 200000
-  channelForm.hourly_limit_tokens = 50000
+  channelForm.windows = defaultWindows()
   channelForm.fire_sale_days_before = 3
   channelForm.fire_sale_remaining_pct = 0.25
   channelForm.fire_sale_discount = 0.2
   channelForm.provider_share = 0.7
+}
+
+function defaultWindows() {
+  const anchor = defaultAnchor()
+  return [
+    { name: 'Monthly', limit_tokens: 1000000, period_unit: 'month', period_count: 1, anchor_at: anchor, timezone: 'UTC' },
+    { name: 'Daily', limit_tokens: 200000, period_unit: 'day', period_count: 1, anchor_at: anchor, timezone: 'UTC' },
+    { name: 'Hourly', limit_tokens: 50000, period_unit: 'hour', period_count: 1, anchor_at: anchor, timezone: 'UTC' },
+  ]
+}
+
+function defaultAnchor() {
+  return new Date().toISOString().slice(0, 19)
+}
+
+function cloneWindows(windows: any[]) {
+  return windows.map((window) => ({
+    name: window.name || 'Window',
+    limit_tokens: Number(window.limit_tokens || 0),
+    period_unit: window.period_unit || 'day',
+    period_count: Number(window.period_count || 1),
+    anchor_at: window.anchor_at || defaultAnchor(),
+    timezone: window.timezone || 'UTC',
+  }))
+}
+
+function addQuotaWindow() {
+  channelForm.windows.push({
+    name: 'Window',
+    limit_tokens: 100000,
+    period_unit: 'day',
+    period_count: 1,
+    anchor_at: defaultAnchor(),
+    timezone: 'UTC',
+  })
+}
+
+function removeQuotaWindow(index: number) {
+  if (channelForm.windows.length <= 1) return
+  channelForm.windows.splice(index, 1)
 }
 
 function toggleFilteredChannels() {
@@ -585,7 +620,22 @@ function apiKeyPayload() {
 
 function channelPayload() {
   return {
-    ...channelForm,
+    name: channelForm.name,
+    provider: channelForm.provider,
+    base_url: channelForm.base_url,
+    enabled: channelForm.enabled,
+    windows: channelForm.windows.map((window) => ({
+      name: window.name,
+      limit_tokens: Number(window.limit_tokens),
+      period_unit: window.period_unit,
+      period_count: Number(window.period_count),
+      anchor_at: window.anchor_at,
+      timezone: window.timezone,
+    })),
+    fire_sale_days_before: Number(channelForm.fire_sale_days_before),
+    fire_sale_remaining_pct: Number(channelForm.fire_sale_remaining_pct),
+    fire_sale_discount: Number(channelForm.fire_sale_discount),
+    provider_share: Number(channelForm.provider_share),
     api_key_secret: channelForm.api_key_secret || null,
     models: splitCsv(channelForm.models),
   }
@@ -609,11 +659,21 @@ function healthLabel(channel: any) {
   return '-'
 }
 
+function primaryWindow(channel: any) {
+  return channel.limits?.windows?.[0] || null
+}
+
+function quotaSummary(channel: any) {
+  return (channel.limits?.windows || [])
+    .map((window: any) => `${window.name}: ${fmt(window.limit_tokens - window.used_tokens, 0)}`)
+    .join(' / ') || '-'
+}
+
 function statusClass(record: any) {
   return {
     off: !record.enabled || record.status === 'manual_disabled',
     warn: record.status === 'cooling',
-    danger: record.status === 'monthly_exhausted' || record.status === 'deleted',
+    danger: record.status === 'deleted',
   }
 }
 
@@ -808,14 +868,37 @@ onMounted(refreshAll)
             <label>API Key <input v-model="channelForm.api_key_secret" type="password" :placeholder="editingChannel ? 'Leave blank to keep existing key' : ''" /></label>
             <label>Models <input v-model="channelForm.models" /></label>
             <label>Status <select v-model="channelForm.enabled"><option :value="true">Enabled</option><option :value="false">Disabled</option></select></label>
-            <label>Reset Day <input v-model.number="channelForm.cycle_reset_day" type="number" min="1" max="28" /></label>
-            <label>Cycle Limit <input v-model.number="channelForm.cycle_limit_tokens" type="number" /></label>
-            <label>Daily Limit <input v-model.number="channelForm.daily_limit_tokens" type="number" /></label>
-            <label>Hourly Limit <input v-model.number="channelForm.hourly_limit_tokens" type="number" /></label>
             <label>Fire Sale Days <input v-model.number="channelForm.fire_sale_days_before" type="number" /></label>
             <label>Fire Sale Remaining <input v-model.number="channelForm.fire_sale_remaining_pct" type="number" step="0.01" /></label>
             <label>Fire Sale Discount <input v-model.number="channelForm.fire_sale_discount" type="number" step="0.01" /></label>
             <label>Provider Share <input v-model.number="channelForm.provider_share" type="number" step="0.01" /></label>
+          </div>
+          <div class="quota-editor panel">
+            <div class="subtoolbar">
+              <div>
+                <h3>Quota windows</h3>
+                <p>Every window is enforced; the first window drives inventory and fire-sale timing.</p>
+              </div>
+              <button class="ghost" @click="addQuotaWindow">Add Window</button>
+            </div>
+            <div class="quota-window" v-for="(window, index) in channelForm.windows" :key="index">
+              <label>Name <input v-model="window.name" /></label>
+              <label>Limit <input v-model.number="window.limit_tokens" type="number" min="1" /></label>
+              <label>Every <input v-model.number="window.period_count" type="number" min="1" /></label>
+              <label>Unit
+                <select v-model="window.period_unit">
+                  <option value="minute">Minute</option>
+                  <option value="hour">Hour</option>
+                  <option value="day">Day</option>
+                  <option value="week">Week</option>
+                  <option value="month">Month</option>
+                  <option value="year">Year</option>
+                </select>
+              </label>
+              <label>Anchor <input v-model="window.anchor_at" /></label>
+              <label>Timezone <input v-model="window.timezone" /></label>
+              <button class="ghost danger" :disabled="channelForm.windows.length <= 1" @click="removeQuotaWindow(index)">Remove</button>
+            </div>
           </div>
           <div class="bulkbar">
             <div class="bulk-meta">
@@ -833,7 +916,7 @@ onMounted(refreshAll)
             <table class="management-table">
               <thead>
                 <tr>
-                  <th></th><th>Name</th><th>Provider</th><th>Status</th><th>Cycle Left</th><th>Day/Hour</th><th>Models</th><th>Health</th><th>Actions</th>
+                  <th></th><th>Name</th><th>Provider</th><th>Status</th><th>Primary Left</th><th>Windows</th><th>Models</th><th>Health</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -842,8 +925,8 @@ onMounted(refreshAll)
                   <td><button class="link-button" @click="selectChannel(channel)">{{ channel.name }}</button></td>
                   <td>{{ channel.provider }}</td>
                   <td><span class="status" :class="statusClass(channel)">{{ channel.status }}</span></td>
-                  <td class="nowrap">{{ fmt(channel.limits.cycle_limit_tokens - channel.limits.used_cycle_tokens, 0) }}</td>
-                  <td class="nowrap">{{ fmt(channel.limits.daily_limit_tokens - channel.limits.used_day_tokens, 0) }} / {{ fmt(channel.limits.hourly_limit_tokens - channel.limits.used_hour_tokens, 0) }}</td>
+                  <td class="nowrap">{{ primaryWindow(channel) ? fmt(primaryWindow(channel).limit_tokens - primaryWindow(channel).used_tokens, 0) : '-' }}</td>
+                  <td class="wrap-cell">{{ quotaSummary(channel) }}</td>
                   <td class="wrap-cell">{{ channel.models.join(', ') || '*' }}</td>
                   <td class="wrap-cell">{{ healthLabel(channel) }}</td>
                   <td>

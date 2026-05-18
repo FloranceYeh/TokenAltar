@@ -110,17 +110,26 @@ impl From<Channel> for PublicChannel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelLimits {
-    pub cycle_limit_tokens: i64,
-    pub cycle_reset_day: i64,
-    pub daily_limit_tokens: i64,
-    pub hourly_limit_tokens: i64,
-    pub used_cycle_tokens: i64,
-    pub used_day_tokens: i64,
-    pub used_hour_tokens: i64,
+    pub windows: Vec<ChannelQuotaWindow>,
     pub fire_sale_days_before: i64,
     pub fire_sale_remaining_pct: f64,
     pub fire_sale_discount: f64,
     pub provider_share: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelQuotaWindow {
+    pub id: i64,
+    pub name: String,
+    pub limit_tokens: i64,
+    pub used_tokens: i64,
+    pub period_unit: String,
+    pub period_count: i64,
+    pub anchor_at: String,
+    pub timezone: String,
+    pub current_window_start_at: String,
+    pub current_window_end_at: String,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

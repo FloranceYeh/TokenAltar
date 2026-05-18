@@ -89,3 +89,9 @@
 - **Status:** Completed
 - **Next Steps:** Consider moving reservation state to a durable recovery table if the process must survive crashes between reserve and settlement.
 - **Context:** Existing gateway integration tests pass; new tests cover reservation release and settlement delta accounting.
+
+## [2026-05-18 23:23] Arbitrary Channel Quota Windows
+- **Changes:** Replaced fixed cycle/day/hour quota handling with arbitrary per-channel quota windows, added normalized SQLite window storage, switched reservation/settlement/routing/surge/fire-sale logic to the unified window path, and updated the Vue channel console to create and display any number of windows.
+- **Status:** Completed
+- **Next Steps:** Configure production channels with the exact upstream billing windows and timezones before routing live traffic.
+- **Context:** Each window is a hard quota constraint; the first window is the primary inventory window used for dashboard availability, routing weight, and fire-sale reset timing.

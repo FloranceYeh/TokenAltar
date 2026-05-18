@@ -710,7 +710,14 @@ pub async fn surge_multiplier(state: &AppState) -> (f64, &'static str) {
     let channels = state.db.list_route_channels().await.unwrap_or_default();
     let total_available: i64 = channels
         .iter()
-        .map(|channel| channel.limits.cycle_limit_tokens - channel.limits.used_cycle_tokens)
+        .map(|channel| {
+            channel
+                .limits
+                .windows
+                .first()
+                .map(|window| window.limit_tokens - window.used_tokens)
+                .unwrap_or_default()
+        })
         .sum();
     if total_available <= 0 {
         return (1.5, "peak");

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use regex::Regex;
 
 use crate::{
@@ -97,37 +97,26 @@ pub fn is_fire_sale(channel: &Channel) -> bool {
 }
 
 fn is_fire_sale_at(channel: &Channel, now: DateTime<Utc>) -> bool {
-    let remaining = channel.limits.cycle_limit_tokens - channel.limits.used_cycle_tokens;
-    if channel.limits.cycle_limit_tokens <= 0 || channel.limits.fire_sale_days_before <= 0 {
+    let Some(primary_window) = channel.limits.windows.first() else {
+        return false;
+    };
+    let remaining = primary_window.limit_tokens - primary_window.used_tokens;
+    if primary_window.limit_tokens <= 0 || channel.limits.fire_sale_days_before <= 0 {
         return false;
     }
-    let remaining_pct = remaining as f64 / channel.limits.cycle_limit_tokens as f64;
+    let remaining_pct = remaining as f64 / primary_window.limit_tokens as f64;
     remaining_pct > channel.limits.fire_sale_remaining_pct
-        && next_cycle_reset_at(channel.limits.cycle_reset_day, now)
+        && DateTime::parse_from_rfc3339(&primary_window.current_window_end_at)
+            .map(|reset_at| reset_at.with_timezone(&Utc))
+            .ok()
             .and_then(|reset_at| reset_at.signed_duration_since(now).to_std().ok())
             .is_some_and(|until_reset| {
-                until_reset
+                !until_reset.is_zero()
+                    && until_reset
                     < std::time::Duration::from_secs(
                         channel.limits.fire_sale_days_before as u64 * 24 * 60 * 60,
                     )
             })
-}
-
-fn next_cycle_reset_at(reset_day: i64, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let reset_day = u32::try_from(reset_day).ok()?;
-    let this_month = Utc
-        .with_ymd_and_hms(now.year(), now.month(), reset_day, 0, 0, 0)
-        .single()?;
-    if this_month > now {
-        return Some(this_month);
-    }
-    let (year, month) = if now.month() == 12 {
-        (now.year() + 1, 1)
-    } else {
-        (now.year(), now.month() + 1)
-    };
-    Utc.with_ymd_and_hms(year, month, reset_day, 0, 0, 0)
-        .single()
 }
 
 fn round4(value: f64) -> f64 {
@@ -137,6 +126,7 @@ fn round4(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn settlement_applies_all_multipliers() {
@@ -203,7 +193,7 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 5, 28, 0, 0, 0).unwrap()
         ));
 
-        channel.limits.used_cycle_tokens = 800;
+        channel.limits.windows[0].used_tokens = 800;
         assert!(!is_fire_sale_at(
             &channel,
             Utc.with_ymd_and_hms(2026, 5, 26, 12, 0, 0).unwrap()
@@ -225,13 +215,19 @@ mod tests {
             upstream_latency_ms: None,
             last_error: None,
             limits: crate::models::ChannelLimits {
-                cycle_limit_tokens: 1000,
-                cycle_reset_day: 28,
-                daily_limit_tokens: 1000,
-                hourly_limit_tokens: 1000,
-                used_cycle_tokens: 100,
-                used_day_tokens: 0,
-                used_hour_tokens: 0,
+                windows: vec![crate::models::ChannelQuotaWindow {
+                    id: 1,
+                    name: "Monthly".to_string(),
+                    limit_tokens: 1000,
+                    used_tokens: 100,
+                    period_unit: "month".to_string(),
+                    period_count: 1,
+                    anchor_at: "2026-05-01T00:00:00".to_string(),
+                    timezone: "UTC".to_string(),
+                    current_window_start_at: "2026-05-01T00:00:00Z".to_string(),
+                    current_window_end_at: "2026-05-28T00:00:00Z".to_string(),
+                    sort_order: 0,
+                }],
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,

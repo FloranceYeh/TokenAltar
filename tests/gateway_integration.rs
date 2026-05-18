@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use tokenaltar::{
     app::{AppState, build_router},
     config::Config,
-    db::ChannelInput,
+    db::{ChannelInput, ChannelQuotaWindowInput},
     models::ModelPrice,
 };
 use tower::ServiceExt;
@@ -49,7 +49,7 @@ async fn openai_responses_gateway_settles_ledger_and_limits() {
     assert_eq!(ledger[0]["input_tokens"], 12);
     assert_eq!(ledger[0]["output_tokens"], 4);
     let channel = state.db.get_channel(1).await.unwrap();
-    assert_eq!(channel.limits.used_cycle_tokens, 16);
+    assert_eq!(channel.limits.windows[0].used_tokens, 16);
 }
 
 #[tokio::test]
@@ -150,9 +150,7 @@ async fn exhausted_channel_is_marked_unavailable() {
     }))
     .await;
     let (state, token) = setup_state(upstream).await;
-    sqlx::query(
-        "UPDATE channel_limits SET used_cycle_tokens = cycle_limit_tokens WHERE channel_id = 1",
-    )
+    sqlx::query("UPDATE channel_quota_windows SET used_tokens = limit_tokens WHERE channel_id = 1")
     .execute(&state.db.pool)
     .await
     .unwrap();
@@ -481,10 +479,7 @@ async fn setup_state_with_provider(upstream: String, provider: &str) -> (AppStat
                 api_key_secret: "upstream-key".to_string(),
                 models: vec!["*".to_string()],
                 enabled: true,
-                cycle_limit_tokens: 1000,
-                cycle_reset_day: 1,
-                daily_limit_tokens: 1000,
-                hourly_limit_tokens: 1000,
+                windows: quota_windows(),
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,
@@ -494,6 +489,27 @@ async fn setup_state_with_provider(upstream: String, provider: &str) -> (AppStat
         .await
         .unwrap();
     (state, token)
+}
+
+fn quota_windows() -> Vec<ChannelQuotaWindowInput> {
+    vec![
+        ChannelQuotaWindowInput {
+            name: "Monthly".to_string(),
+            limit_tokens: 1000,
+            period_unit: "month".to_string(),
+            period_count: 1,
+            anchor_at: "2026-05-01T00:00:00".to_string(),
+            timezone: "UTC".to_string(),
+        },
+        ChannelQuotaWindowInput {
+            name: "Daily".to_string(),
+            limit_tokens: 1000,
+            period_unit: "day".to_string(),
+            period_count: 1,
+            anchor_at: "2026-05-18T00:00:00".to_string(),
+            timezone: "UTC".to_string(),
+        },
+    ]
 }
 
 fn test_config(database_url: &str) -> Config {

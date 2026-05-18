@@ -107,10 +107,13 @@ async fn filter_healthy<'a>(
         {
             continue;
         }
-        let remaining_cycle = channel.limits.cycle_limit_tokens - channel.limits.used_cycle_tokens;
-        let remaining_day = channel.limits.daily_limit_tokens - channel.limits.used_day_tokens;
-        let remaining_hour = channel.limits.hourly_limit_tokens - channel.limits.used_hour_tokens;
-        if remaining_cycle <= 0 || remaining_day <= 0 || remaining_hour <= 0 {
+        if channel.limits.windows.is_empty()
+            || channel
+                .limits
+                .windows
+                .iter()
+                .any(|window| window.limit_tokens - window.used_tokens <= 0)
+        {
             continue;
         }
         healthy.push(channel);
@@ -130,7 +133,12 @@ fn weighted_choice(channels: &[&Channel], fire_sale_only: bool) -> Option<Channe
     let weights = candidates
         .iter()
         .map(|channel| {
-            let remaining = channel.limits.cycle_limit_tokens - channel.limits.used_cycle_tokens;
+            let remaining = channel
+                .limits
+                .windows
+                .first()
+                .map(|window| window.limit_tokens - window.used_tokens)
+                .unwrap_or_default();
             let mut weight = remaining.max(1) as f64;
             if is_fire_sale(channel) {
                 weight *= 5.0;
@@ -155,7 +163,7 @@ fn model_matches(pattern: &str, model: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{ChannelLimits, ProviderKind};
+    use crate::models::{ChannelLimits, ChannelQuotaWindow, ProviderKind};
 
     use super::*;
 
@@ -203,13 +211,19 @@ mod tests {
 
     fn limits(remaining: i64) -> ChannelLimits {
         ChannelLimits {
-            cycle_limit_tokens: remaining,
-            cycle_reset_day: 1,
-            daily_limit_tokens: remaining,
-            hourly_limit_tokens: remaining,
-            used_cycle_tokens: 0,
-            used_day_tokens: 0,
-            used_hour_tokens: 0,
+            windows: vec![ChannelQuotaWindow {
+                id: 1,
+                name: "Primary".to_string(),
+                limit_tokens: remaining,
+                used_tokens: 0,
+                period_unit: "month".to_string(),
+                period_count: 1,
+                anchor_at: "2026-05-01T00:00:00".to_string(),
+                timezone: "UTC".to_string(),
+                current_window_start_at: "2026-05-01T00:00:00Z".to_string(),
+                current_window_end_at: "2026-06-01T00:00:00Z".to_string(),
+                sort_order: 0,
+            }],
             fire_sale_days_before: 3,
             fire_sale_remaining_pct: 0.25,
             fire_sale_discount: 0.2,
