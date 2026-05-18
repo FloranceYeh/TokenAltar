@@ -386,9 +386,18 @@ onMounted(refreshAll)
 
       <section v-if="!user" class="auth-panel">
         <div class="auth-hero">
+          <div class="hero-symbols" aria-hidden="true">
+            <div class="antikythera-dial">
+              <span class="dial-ring ring-major"></span>
+              <span class="dial-ring ring-minor"></span>
+              <span class="gear gear-large"></span>
+              <span class="gear gear-small"></span>
+              <span class="dial-hand"></span>
+            </div>
+          </div>
           <div class="hero-copy">
             <span>Private token exchange</span>
-            <h2>TokenAltar</h2>
+            <h2>Token<wbr />Altar</h2>
             <p>Pool upstream capacity, meter token cost, and settle a small-circle LLM economy from one console.</p>
           </div>
           <div class="auth-card">

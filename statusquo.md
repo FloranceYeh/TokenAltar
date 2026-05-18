@@ -41,3 +41,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Text-only protocol support remains limited to chat/responses/messages/gemini generate content; embeddings, rerank, images, and realtime are still out of scope.
+
+## [2026-05-18 15:58] Antikythera Hero Refinement
+- **Changes:** Removed Platonic Solids and Janus hero overlays, kept only the animated Antikythera mechanism layer, and fixed the mid-width login hero overlap by adding container-query breakpoints, safer grid tracks, and an optional word-break point in the TokenAltar title.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Verified `pnpm --dir frontend build`; checked 1366x900 and 2048x1373 hero/title/card geometry for no overlap and zero horizontal page overflow.

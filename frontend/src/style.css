@@ -366,14 +366,15 @@ caption {
   min-height: calc(100vh - 68px);
   display: grid;
   place-items: center;
+  container-type: inline-size;
 }
 
 .auth-hero {
   position: relative;
-  width: min(1120px, 100%);
+  width: min(1280px, 100%);
   min-height: 620px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
   align-items: end;
   gap: 28px;
   overflow: hidden;
@@ -391,18 +392,121 @@ caption {
 .auth-hero::before {
   position: absolute;
   inset: 22px;
+  z-index: 4;
   border: 1px solid rgba(125, 86, 37, 0.24);
   border-radius: 6px;
   content: "";
   pointer-events: none;
 }
 
+.auth-hero::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  content: "";
+  background:
+    linear-gradient(90deg, rgba(255, 250, 238, 0.4), transparent 40%),
+    linear-gradient(180deg, transparent 0 54%, rgba(31, 18, 13, 0.2));
+  pointer-events: none;
+}
+
+.hero-symbols {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.antikythera-dial {
+  position: absolute;
+  right: 36px;
+  top: 26px;
+  width: 430px;
+  height: 430px;
+  border-radius: 50%;
+  opacity: 0.5;
+  background:
+    radial-gradient(circle, rgba(84, 54, 27, 0.2) 0 8%, transparent 9% 21%, rgba(228, 190, 116, 0.3) 22% 23%, transparent 24% 38%, rgba(228, 190, 116, 0.24) 39% 40%, transparent 41%),
+    repeating-conic-gradient(from 4deg, rgba(237, 203, 139, 0.46) 0deg 1deg, transparent 1deg 7deg);
+  filter: drop-shadow(0 18px 24px rgba(22, 12, 6, 0.28));
+  animation: dial-drift 46s linear infinite;
+}
+
+.dial-ring,
+.gear,
+.dial-hand {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.dial-ring {
+  inset: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(237, 203, 139, 0.52);
+}
+
+.ring-major::before,
+.ring-minor::before {
+  position: absolute;
+  inset: 17px;
+  border-radius: 50%;
+  border: 1px solid rgba(129, 87, 39, 0.42);
+  content: "";
+}
+
+.ring-minor {
+  inset: 94px;
+  opacity: 0.7;
+}
+
+.gear {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(58, 36, 18, 0.72) 0 18%, transparent 19% 29%, rgba(233, 196, 122, 0.34) 30% 42%, transparent 43%),
+    repeating-conic-gradient(rgba(232, 192, 113, 0.7) 0deg 5deg, transparent 5deg 12deg);
+  mix-blend-mode: multiply;
+}
+
+.gear-large {
+  right: 92px;
+  top: 82px;
+  width: 156px;
+  height: 156px;
+  animation: gear-turn 34s linear infinite;
+}
+
+.gear-small {
+  right: 232px;
+  top: 214px;
+  width: 92px;
+  height: 92px;
+  animation: gear-turn-reverse 24s linear infinite;
+}
+
+.dial-hand {
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 162px;
+  transform-origin: 50% 0;
+  background: linear-gradient(180deg, rgba(255, 230, 164, 0.86), transparent);
+  animation: dial-hand-sweep 38s linear infinite;
+}
+
 .hero-copy {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  min-width: 0;
   max-width: 610px;
   display: grid;
   gap: 18px;
+}
+
+.hero-copy h2 {
+  max-width: 100%;
+  overflow-wrap: normal;
 }
 
 .hero-copy span,
@@ -435,7 +539,8 @@ caption {
 
 .auth-card {
   position: relative;
-  z-index: 1;
+  z-index: 3;
+  justify-self: stretch;
   display: grid;
   gap: 15px;
   width: 100%;
@@ -480,6 +585,85 @@ caption {
   overflow: hidden;
   margin-bottom: 22px;
   padding: 24px;
+}
+
+@keyframes dial-drift {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes gear-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes gear-turn-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes dial-hand-sweep {
+  from {
+    transform: rotate(26deg);
+  }
+  to {
+    transform: rotate(386deg);
+  }
+}
+
+@container (max-width: 1120px) {
+  .auth-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 380px);
+    gap: 20px;
+  }
+
+  .hero-copy {
+    max-width: 500px;
+  }
+
+  .hero-copy h2 {
+    font-size: 3.65rem;
+  }
+
+  .hero-copy p {
+    max-width: 460px;
+  }
+
+  .antikythera-dial {
+    right: -28px;
+    top: 30px;
+    width: 360px;
+    height: 360px;
+    opacity: 0.34;
+  }
+}
+
+@container (max-width: 960px) {
+  .auth-hero {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    min-height: auto;
+  }
+
+  .hero-copy {
+    max-width: 100%;
+  }
+
+  .auth-card {
+    max-width: 460px;
+  }
+
+  .antikythera-dial {
+    right: -112px;
+    top: 24px;
+    opacity: 0.24;
+  }
 }
 
 .page-header::after {
@@ -741,6 +925,13 @@ td:first-child {
     max-width: 100%;
   }
 
+  .antikythera-dial {
+    right: -12px;
+    top: 28px;
+    width: 360px;
+    height: 360px;
+  }
+
   .metric-grid,
   .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -791,6 +982,12 @@ td:first-child {
 
   .auth-hero {
     padding: 24px;
+  }
+
+  .antikythera-dial {
+    right: -110px;
+    top: 12px;
+    opacity: 0.28;
   }
 
   .page-header {
@@ -861,6 +1058,14 @@ td:first-child {
     padding: 18px;
   }
 
+  .antikythera-dial {
+    right: -186px;
+    top: 46px;
+    width: 300px;
+    height: 300px;
+    opacity: 0.18;
+  }
+
   .auth-hero::before {
     inset: 12px;
   }
@@ -877,5 +1082,14 @@ td:first-child {
 
   table {
     min-width: 560px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .antikythera-dial,
+  .gear-large,
+  .gear-small,
+  .dial-hand {
+    animation: none;
   }
 }
