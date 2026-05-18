@@ -59,3 +59,9 @@
 - **Status:** Completed
 - **Next Steps:** Add provider-specific edge cases if a live upstream rejects any of the accepted image shapes.
 - **Context:** Same-protocol passthrough remains direct; cross-protocol text plus image conversion is intentionally minimal and limited to the current text API surface.
+
+## [2026-05-18 19:43] Management Controls Deepening
+- **Changes:** Added API key update/rotate/batch-delete lifecycle controls, channel update/copy/test/batch-enable lifecycle controls, soft-delete visibility rules, gateway model allow-list enforcement, and a polished console for filtering, selecting, editing, testing, cloning, and retiring keys/channels.
+- **Status:** Completed
+- **Next Steps:** Smoke test one real upstream channel health check and one rotated client key in production credentials.
+- **Context:** Channel and API key deletion is soft to preserve ledger history; empty channel API key updates keep the existing upstream secret.
