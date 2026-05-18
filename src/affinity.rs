@@ -43,9 +43,7 @@ impl AffinityCache {
 
     pub async fn get(&self, key: &str) -> Option<i64> {
         let mut inner = self.inner.lock().await;
-        let Some(entry) = inner.get(key).cloned() else {
-            return None;
-        };
+        let entry = inner.get(key).cloned()?;
         if entry.expires_at > Utc::now() {
             Some(entry.channel_id)
         } else {
