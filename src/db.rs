@@ -1943,11 +1943,6 @@ fn validate_quota_windows(windows: &[ChannelQuotaWindowInput]) -> AppResult<()> 
             "channel must define at least one quota window".to_string(),
         ));
     }
-    if windows.len() > 16 {
-        return Err(AppError::BadRequest(
-            "channel accepts at most 16 quota windows".to_string(),
-        ));
-    }
     for window in windows {
         let name = window.name.trim();
         if name.is_empty() || name.chars().count() > 80 {

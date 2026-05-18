@@ -95,3 +95,9 @@
 - **Status:** Completed
 - **Next Steps:** Configure production channels with the exact upstream billing windows and timezones before routing live traffic.
 - **Context:** Each window is a hard quota constraint; the first window is the primary inventory window used for dashboard availability, routing weight, and fire-sale reset timing.
+
+## [2026-05-18 23:29] Quota Window Count Contract
+- **Changes:** Removed the artificial per-channel quota window count cap so the API accepts any positive number of windows while still requiring each window to have valid period and anchor semantics.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Runtime cost scales linearly with configured windows because every gateway reservation checks all channel windows atomically.
