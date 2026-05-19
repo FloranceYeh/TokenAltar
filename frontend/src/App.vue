@@ -34,6 +34,28 @@ type TabId =
 type TabItem = [TabId, string]
 const adminOnlyTabs = new Set<TabId>(['affinity', 'settings'])
 
+type LeaderboardRow = {
+  user_id: number | null
+  name: string
+  score: number
+}
+
+type LeaderboardPayload = {
+  period?: 'day' | 'month'
+  timezone?: string
+  window_start?: string
+  providers: LeaderboardRow[]
+  consumers: LeaderboardRow[]
+}
+
+type RankedLeaderboardRow = LeaderboardRow & {
+  key: string
+  rank: number
+  scoreText: string
+  share: number
+  tone: 'gold' | 'lapis' | 'olive' | 'plain'
+}
+
 const token = ref(localStorage.getItem('tokenaltar_token') || '')
 const user = ref<User | null>(null)
 const error = ref('')
@@ -46,7 +68,7 @@ const rules = ref<any[]>([])
 const ledger = ref<any[]>([])
 const transfers = ref<any[]>([])
 const redPackets = ref<any[]>([])
-const leaderboards = ref<any>({ providers: [], consumers: [] })
+const leaderboards = ref<LeaderboardPayload>({ providers: [], consumers: [] })
 const leaderboardPeriod = ref<'day' | 'month'>('month')
 const settings = ref<any[]>([])
 const dashboard = ref<Dashboard | null>(null)
@@ -235,6 +257,32 @@ const dashboardMetrics = computed(() => [
   { label: 'Enabled channels', value: `${dashboard.value?.enabled_channels || 0} / ${dashboard.value?.channels || 0}`, detail: 'online capacity' },
   { label: 'Today spend', value: fmt(dashboard.value?.spent_points_today, 4), detail: 'points settled' },
 ])
+const providerRows = computed(() => rankedRows(leaderboards.value.providers, 'tokens', 0))
+const consumerRows = computed(() => rankedRows(leaderboards.value.consumers, 'points', 4))
+const leaderboardSummary = computed(() => {
+  const providerTotal = totalScore(leaderboards.value.providers)
+  const consumerTotal = totalScore(leaderboards.value.consumers)
+  const providerTop = providerRows.value[0]
+  const consumerTop = consumerRows.value[0]
+
+  return [
+    {
+      label: 'Provider volume',
+      value: fmt(providerTotal, 0),
+      detail: providerTop ? `${providerTop.name} leads` : 'no provider rows',
+    },
+    {
+      label: 'Consumer burn',
+      value: fmt(consumerTotal, 4),
+      detail: consumerTop ? `${consumerTop.name} leads` : 'no consumer rows',
+    },
+    {
+      label: 'Ranked stewards',
+      value: `${leaderboards.value.providers.length + leaderboards.value.consumers.length}`,
+      detail: `${leaderboards.value.timezone || 'server-local'} window`,
+    },
+  ]
+})
 const priceSaveDisabled = computed(() => !isAdmin.value && !priceForm.channel_id)
 
 async function api(path: string, options: RequestInit = {}) {
@@ -665,6 +713,27 @@ async function refreshMe() {
 
 function fmt(value: number | undefined, digits = 2) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+function totalScore(rows: LeaderboardRow[] = []) {
+  return rows.reduce((sum, row) => sum + Number(row.score || 0), 0)
+}
+
+function rankedRows(rows: LeaderboardRow[] = [], unit: 'tokens' | 'points', digits: number): RankedLeaderboardRow[] {
+  const peak = Math.max(...rows.map((row) => Number(row.score || 0)), 0)
+  const tones: RankedLeaderboardRow['tone'][] = ['gold', 'lapis', 'olive']
+
+  return rows.map((row, index) => {
+    const score = Number(row.score || 0)
+    return {
+      ...row,
+      key: `${row.user_id ?? 'anonymous'}:${row.name}:${index}`,
+      rank: index + 1,
+      scoreText: `${fmt(score, digits)} ${unit}`,
+      share: peak > 0 ? Math.max(4, Math.round((score / peak) * 100)) : 0,
+      tone: tones[index] || 'plain',
+    }
+  })
 }
 
 function apiKeyPayload() {
@@ -1101,9 +1170,13 @@ onMounted(refreshAll)
         </section>
 
         <section v-if="activeTab === 'leaderboards'">
-          <div class="toolbar">
-            <div><h3>{{ leaderboardPeriod === 'day' ? 'Daily honors' : 'Monthly honors' }}</h3><p>Provider tokens and consumer point burn.</p></div>
-            <div class="toolbar-actions">
+          <div class="leaderboard-hero">
+            <div>
+              <span class="section-kicker">{{ leaderboardPeriod === 'day' ? 'Daily Circuit' : 'Monthly Circuit' }}</span>
+              <h3>{{ leaderboardPeriod === 'day' ? 'Today on the altar' : 'This month on the altar' }}</h3>
+              <p>Provider token output and consumer point burn share the same settlement window.</p>
+            </div>
+            <div class="leaderboard-controls">
               <div class="segmented small">
                 <button :class="{ active: leaderboardPeriod === 'day' }" @click="setLeaderboardPeriod('day')">Day</button>
                 <button :class="{ active: leaderboardPeriod === 'month' }" @click="setLeaderboardPeriod('month')">Month</button>
@@ -1111,10 +1184,68 @@ onMounted(refreshAll)
               <button class="ghost" @click="loadLeaderboards">Refresh</button>
             </div>
           </div>
-          <p class="muted leaderboard-window">Window starts {{ leaderboards.window_start || '-' }} / {{ leaderboards.timezone || 'server-local' }}</p>
-          <div class="table-pair">
-            <div class="table-shell"><table><caption>Providers</caption><tbody><tr v-for="row in leaderboards.providers" :key="row.name"><td>{{ row.name }}</td><td>{{ fmt(row.score, 0) }} tokens</td></tr></tbody></table></div>
-            <div class="table-shell"><table><caption>Consumers</caption><tbody><tr v-for="row in leaderboards.consumers" :key="row.name"><td>{{ row.name }}</td><td>{{ fmt(row.score, 4) }} points</td></tr></tbody></table></div>
+
+          <div class="leaderboard-meta-grid">
+            <article v-for="item in leaderboardSummary" :key="item.label">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <em>{{ item.detail }}</em>
+            </article>
+            <article>
+              <span>Window start</span>
+              <strong>{{ leaderboards.window_start || '-' }}</strong>
+              <em>{{ leaderboards.timezone || 'server-local' }}</em>
+            </article>
+          </div>
+
+          <div class="leaderboard-grid">
+            <article class="leaderboard-board provider-board">
+              <div class="leaderboard-board-header">
+                <div>
+                  <span>Providers</span>
+                  <h3>Token supply</h3>
+                </div>
+                <strong>{{ providerRows.length }}</strong>
+              </div>
+              <div v-if="providerRows.length" class="leaderboard-list">
+                <div v-for="row in providerRows" :key="row.key" class="leaderboard-entry" :class="`tone-${row.tone}`">
+                  <div class="rank-badge">{{ row.rank }}</div>
+                  <div class="leaderboard-person">
+                    <strong>{{ row.name }}</strong>
+                    <span>{{ row.user_id ? `User #${row.user_id}` : 'Anonymous steward' }}</span>
+                  </div>
+                  <div class="leaderboard-score">
+                    <strong>{{ row.scoreText }}</strong>
+                    <span class="score-track"><i :style="{ width: `${row.share}%` }"></i></span>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="leaderboard-empty">No provider settlements in this window.</div>
+            </article>
+
+            <article class="leaderboard-board consumer-board">
+              <div class="leaderboard-board-header">
+                <div>
+                  <span>Consumers</span>
+                  <h3>Point burn</h3>
+                </div>
+                <strong>{{ consumerRows.length }}</strong>
+              </div>
+              <div v-if="consumerRows.length" class="leaderboard-list">
+                <div v-for="row in consumerRows" :key="row.key" class="leaderboard-entry" :class="`tone-${row.tone}`">
+                  <div class="rank-badge">{{ row.rank }}</div>
+                  <div class="leaderboard-person">
+                    <strong>{{ row.name }}</strong>
+                    <span>{{ row.user_id ? `User #${row.user_id}` : 'Anonymous steward' }}</span>
+                  </div>
+                  <div class="leaderboard-score">
+                    <strong>{{ row.scoreText }}</strong>
+                    <span class="score-track"><i :style="{ width: `${row.share}%` }"></i></span>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="leaderboard-empty">No consumer settlements in this window.</div>
+            </article>
           </div>
         </section>
 

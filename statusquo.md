@@ -113,3 +113,9 @@
 - **Status:** Completed
 - **Next Steps:** Tune retry/cooldown knobs from production traffic if upstream providers need different backoff behavior.
 - **Context:** `skip_retry_on_failure=true` still pins bound affinity traffic to the bound channel and returns its error; streaming requests retry only before a successful upstream stream begins.
+
+## [2026-05-19 13:03] Leaderboard Redesign
+- **Changes:** Redesigned the Vue leaderboard tab with typed ranking rows, summary metrics, ranked provider/consumer boards, score bars, anonymity labels, empty states, and responsive mobile layout.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Backend leaderboard semantics are unchanged; verification used a temporary `/tmp` SQLite database with seeded demo ledger rows for visual inspection.
