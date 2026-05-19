@@ -809,8 +809,8 @@ onMounted(refreshAll)
 </script>
 
 <template>
-  <main class="shell">
-    <aside class="sidebar">
+  <main class="shell" :class="{ 'auth-shell': !user }">
+    <aside v-if="user" class="sidebar">
       <div class="brand">
         <div class="mark"><span>TA</span></div>
         <div>
@@ -838,6 +838,7 @@ onMounted(refreshAll)
 
       <section v-if="!user" class="auth-panel">
         <div class="auth-hero">
+          <div class="hero-atmosphere" aria-hidden="true"></div>
           <div class="hero-symbols" aria-hidden="true">
             <div class="antikythera-dial">
               <span class="dial-ring ring-major"></span>
@@ -848,11 +849,18 @@ onMounted(refreshAll)
             </div>
           </div>
           <div class="hero-copy">
-            <span>Private token exchange</span>
+            <div class="hero-kicker">
+              <span>Private token exchange</span>
+              <i aria-hidden="true"></i>
+              <span>LLM capacity console</span>
+            </div>
             <h2>Token<wbr />Altar</h2>
-            <p>Pool upstream capacity, meter token cost, and settle a small-circle LLM economy from one console.</p>
           </div>
           <div class="auth-card">
+            <div class="auth-card-topline">
+              <span>Secure Steward Entry</span>
+              <strong>{{ authMode === 'login' ? 'Access' : 'Invite' }}</strong>
+            </div>
             <div class="segmented">
               <button :class="{ active: authMode === 'login' }" @click="authMode = 'login'">Login</button>
               <button :class="{ active: authMode === 'register' }" @click="authMode = 'register'">Register</button>

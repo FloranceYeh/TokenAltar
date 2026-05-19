@@ -206,6 +206,22 @@ caption {
   pointer-events: none;
 }
 
+.auth-shell {
+  grid-template-columns: 1fr;
+  background:
+    linear-gradient(180deg, rgba(255, 249, 237, 0.04), rgba(255, 249, 237, 0)),
+    #16110d;
+}
+
+.auth-shell::after {
+  display: none;
+}
+
+.auth-shell .content {
+  min-height: 100vh;
+  padding: 0;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -256,7 +272,6 @@ caption {
 .muted,
 .toolbar p,
 .page-header p,
-.hero-copy p,
 .metric-grid span,
 .metric-grid em {
   color: var(--ink-muted);
@@ -363,39 +378,42 @@ caption {
 
 .auth-panel {
   max-width: none !important;
-  min-height: calc(100vh - 68px);
+  min-height: 100vh;
   display: grid;
   place-items: center;
+  padding: 32px;
   container-type: inline-size;
 }
 
 .auth-hero {
   position: relative;
-  width: min(1280px, 100%);
-  min-height: 620px;
+  isolation: isolate;
+  width: min(1320px, 100%);
+  min-height: 690px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
-  align-items: end;
-  gap: 28px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 414px);
+  align-items: center;
+  gap: 40px;
   overflow: hidden;
-  border: 1px solid rgba(225, 189, 115, 0.36);
+  border: 1px solid rgba(225, 189, 115, 0.48);
   border-radius: 8px;
-  padding: 44px;
+  padding: 54px;
   background:
-    linear-gradient(90deg, rgba(247, 240, 227, 0.96), rgba(247, 240, 227, 0.82) 39%, rgba(31, 18, 13, 0.14)),
-    linear-gradient(180deg, rgba(255, 248, 226, 0.08), rgba(31, 18, 13, 0.18)),
+    linear-gradient(90deg, rgba(12, 10, 8, 0.98) 0%, rgba(22, 15, 11, 0.9) 36%, rgba(57, 29, 20, 0.5) 62%, rgba(10, 9, 8, 0.32) 100%),
+    linear-gradient(180deg, rgba(10, 8, 6, 0.22), rgba(8, 6, 5, 0.72)),
     url("/tokenaltar-background.png") center / cover no-repeat,
-    #f5eddd;
-  box-shadow: var(--shadow);
+    #17110d;
+  box-shadow: 0 34px 80px rgba(0, 0, 0, 0.42), 0 16px 38px rgba(80, 45, 20, 0.22);
 }
 
 .auth-hero::before {
   position: absolute;
-  inset: 22px;
-  z-index: 4;
-  border: 1px solid rgba(125, 86, 37, 0.24);
+  inset: 24px;
+  z-index: 5;
+  border: 1px solid rgba(244, 210, 141, 0.28);
   border-radius: 6px;
   content: "";
+  box-shadow: inset 0 0 0 1px rgba(255, 245, 213, 0.07);
   pointer-events: none;
 }
 
@@ -405,31 +423,46 @@ caption {
   z-index: 1;
   content: "";
   background:
-    linear-gradient(90deg, rgba(255, 250, 238, 0.4), transparent 40%),
-    linear-gradient(180deg, transparent 0 54%, rgba(31, 18, 13, 0.2));
+    linear-gradient(180deg, rgba(255, 238, 185, 0.08), transparent 18%),
+    linear-gradient(90deg, transparent 0 58%, rgba(226, 179, 92, 0.16) 76%, transparent 100%),
+    linear-gradient(180deg, transparent 55%, rgba(7, 5, 4, 0.62));
+  pointer-events: none;
+}
+
+.hero-atmosphere {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  opacity: 0.64;
+  background:
+    linear-gradient(105deg, transparent 0 16%, rgba(225, 189, 115, 0.16) 16.3%, transparent 16.9% 42%, rgba(225, 189, 115, 0.1) 42.4%, transparent 43%),
+    linear-gradient(rgba(255, 240, 202, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 240, 202, 0.04) 1px, transparent 1px);
+  background-size: 100% 100%, 56px 56px, 56px 56px;
+  mask-image: linear-gradient(90deg, #000, rgba(0, 0, 0, 0.92) 48%, transparent 94%);
   pointer-events: none;
 }
 
 .hero-symbols {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   overflow: hidden;
   pointer-events: none;
 }
 
 .antikythera-dial {
   position: absolute;
-  right: 36px;
-  top: 26px;
-  width: 430px;
-  height: 430px;
+  right: 318px;
+  top: 48px;
+  width: 360px;
+  height: 360px;
   border-radius: 50%;
-  opacity: 0.5;
+  opacity: 0.38;
   background:
-    radial-gradient(circle, rgba(84, 54, 27, 0.2) 0 8%, transparent 9% 21%, rgba(228, 190, 116, 0.3) 22% 23%, transparent 24% 38%, rgba(228, 190, 116, 0.24) 39% 40%, transparent 41%),
-    repeating-conic-gradient(from 4deg, rgba(237, 203, 139, 0.46) 0deg 1deg, transparent 1deg 7deg);
-  filter: drop-shadow(0 18px 24px rgba(22, 12, 6, 0.28));
+    radial-gradient(circle, rgba(255, 232, 164, 0.18) 0 8%, transparent 9% 21%, rgba(228, 190, 116, 0.32) 22% 23%, transparent 24% 38%, rgba(228, 190, 116, 0.22) 39% 40%, transparent 41%),
+    repeating-conic-gradient(from 4deg, rgba(237, 203, 139, 0.52) 0deg 1deg, transparent 1deg 7deg);
+  filter: drop-shadow(0 22px 28px rgba(0, 0, 0, 0.34));
   animation: dial-drift 46s linear infinite;
 }
 
@@ -444,7 +477,7 @@ caption {
 .dial-ring {
   inset: 34px;
   border-radius: 50%;
-  border: 1px solid rgba(237, 203, 139, 0.52);
+  border: 1px solid rgba(237, 203, 139, 0.55);
 }
 
 .ring-major::before,
@@ -464,9 +497,9 @@ caption {
 .gear {
   border-radius: 50%;
   background:
-    radial-gradient(circle, rgba(58, 36, 18, 0.72) 0 18%, transparent 19% 29%, rgba(233, 196, 122, 0.34) 30% 42%, transparent 43%),
-    repeating-conic-gradient(rgba(232, 192, 113, 0.7) 0deg 5deg, transparent 5deg 12deg);
-  mix-blend-mode: multiply;
+    radial-gradient(circle, rgba(34, 20, 10, 0.72) 0 18%, transparent 19% 29%, rgba(233, 196, 122, 0.38) 30% 42%, transparent 43%),
+    repeating-conic-gradient(rgba(232, 192, 113, 0.74) 0deg 5deg, transparent 5deg 12deg);
+  mix-blend-mode: screen;
 }
 
 .gear-large {
@@ -491,38 +524,51 @@ caption {
   width: 2px;
   height: 162px;
   transform-origin: 50% 0;
-  background: linear-gradient(180deg, rgba(255, 230, 164, 0.86), transparent);
+  background: linear-gradient(180deg, rgba(255, 230, 164, 0.9), transparent);
   animation: dial-hand-sweep 38s linear infinite;
 }
 
 .hero-copy {
   position: relative;
-  z-index: 2;
+  z-index: 3;
   min-width: 0;
-  max-width: 610px;
+  max-width: 690px;
   display: grid;
   gap: 18px;
+  align-self: center;
+  color: #fff4d6;
 }
 
 .hero-copy h2 {
   max-width: 100%;
+  color: #fff2ce;
+  font-size: 6.6rem;
+  line-height: 0.9;
   overflow-wrap: normal;
+  text-shadow: 0 18px 36px rgba(0, 0, 0, 0.46), 0 0 34px rgba(226, 178, 92, 0.24);
 }
 
-.hero-copy span,
+.hero-kicker span,
 .page-header span,
-.card-heading span {
-  color: var(--gold);
+.card-heading span,
+.auth-card-topline span {
+  color: var(--gold-bright);
   font-size: 0.78rem;
   font-weight: 900;
   text-transform: uppercase;
 }
 
-.hero-copy p {
-  max-width: 560px;
-  color: #58452f;
-  font-size: 1rem;
-  line-height: 1.7;
+.hero-kicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hero-kicker i {
+  width: 42px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(225, 189, 115, 0.15), rgba(225, 189, 115, 0.82));
 }
 
 .auth-card,
@@ -542,10 +588,58 @@ caption {
   z-index: 3;
   justify-self: stretch;
   display: grid;
-  gap: 15px;
+  gap: 16px;
   width: 100%;
-  padding: 18px;
-  backdrop-filter: blur(12px);
+  padding: 22px;
+  border-color: rgba(225, 189, 115, 0.32);
+  background:
+    linear-gradient(180deg, rgba(30, 22, 16, 0.82), rgba(12, 10, 9, 0.9)),
+    rgba(18, 13, 10, 0.82);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 244, 213, 0.1);
+  color: #fff4d6;
+  backdrop-filter: blur(18px);
+}
+
+.auth-card label {
+  color: rgba(255, 234, 194, 0.78);
+}
+
+.auth-card h3 {
+  color: #fff4d6;
+}
+
+.auth-card input {
+  border-color: rgba(225, 189, 115, 0.2);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 236, 0.96), rgba(246, 229, 200, 0.9)),
+    #fff8ea;
+}
+
+.auth-card > button {
+  min-height: 44px;
+  border-color: rgba(238, 196, 115, 0.58);
+  background: linear-gradient(180deg, #d59b43, #7b4722);
+  color: #1d1209;
+  text-shadow: 0 1px rgba(255, 240, 197, 0.48);
+}
+
+.auth-card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 2px;
+}
+
+.auth-card-topline strong {
+  min-width: 58px;
+  border: 1px solid rgba(225, 189, 115, 0.28);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: rgba(255, 242, 213, 0.86);
+  font-size: 0.74rem;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 .card-heading {
@@ -574,6 +668,20 @@ caption {
 .segmented button.active {
   background: linear-gradient(180deg, #6f4526, #4b2e1e);
   color: #fff2d5;
+}
+
+.auth-card .segmented {
+  border-color: rgba(225, 189, 115, 0.24);
+  background: rgba(255, 245, 220, 0.08);
+}
+
+.auth-card .segmented button {
+  color: rgba(255, 236, 199, 0.72);
+}
+
+.auth-card .segmented button.active {
+  background: linear-gradient(180deg, rgba(255, 231, 176, 0.24), rgba(214, 150, 61, 0.18));
+  color: #fff4d6;
 }
 
 .segmented.small {
@@ -628,28 +736,25 @@ caption {
 
 @container (max-width: 1120px) {
   .auth-hero {
-    grid-template-columns: minmax(0, 1fr) minmax(340px, 380px);
-    gap: 20px;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 390px);
+    gap: 28px;
+    padding: 42px;
   }
 
   .hero-copy {
-    max-width: 500px;
+    max-width: 560px;
   }
 
   .hero-copy h2 {
-    font-size: 3.65rem;
-  }
-
-  .hero-copy p {
-    max-width: 460px;
+    font-size: 5.2rem;
   }
 
   .antikythera-dial {
-    right: -28px;
-    top: 30px;
-    width: 360px;
-    height: 360px;
-    opacity: 0.34;
+    right: 260px;
+    top: 38px;
+    width: 300px;
+    height: 300px;
+    opacity: 0.28;
   }
 }
 
@@ -658,20 +763,22 @@ caption {
     grid-template-columns: 1fr;
     align-items: stretch;
     min-height: auto;
+    background-position: 62% center;
   }
 
   .hero-copy {
     max-width: 100%;
+    padding: 16px 0 0;
   }
 
   .auth-card {
-    max-width: 460px;
+    max-width: 480px;
   }
 
   .antikythera-dial {
-    right: -112px;
-    top: 24px;
-    opacity: 0.24;
+    right: -58px;
+    top: 22px;
+    opacity: 0.2;
   }
 }
 
@@ -1412,6 +1519,10 @@ button.danger:hover:not(:disabled) {
     opacity: 0.14;
   }
 
+  .auth-shell {
+    background: #16110d;
+  }
+
   .sidebar {
     position: relative;
     min-height: auto;
@@ -1432,11 +1543,17 @@ button.danger:hover:not(:disabled) {
   }
 
   .auth-panel {
-    min-height: calc(100vh - 36px);
+    min-height: 100vh;
+    place-items: start center;
+    padding: 18px;
   }
 
   .auth-hero {
     padding: 24px;
+  }
+
+  .hero-copy h2 {
+    font-size: 4.35rem;
   }
 
   .antikythera-dial {
@@ -1543,7 +1660,23 @@ button.danger:hover:not(:disabled) {
   }
 
   .auth-hero {
-    padding: 18px;
+    padding: 22px;
+  }
+
+  .auth-panel {
+    padding: 12px;
+  }
+
+  .hero-kicker {
+    gap: 8px;
+  }
+
+  .hero-kicker i {
+    width: 24px;
+  }
+
+  .hero-copy h2 {
+    font-size: 3.55rem;
   }
 
   .antikythera-dial {

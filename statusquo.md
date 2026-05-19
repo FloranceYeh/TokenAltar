@@ -125,3 +125,9 @@
 - **Status:** Completed
 - **Next Steps:** Run `pnpm --dir frontend build` before compiling Rust whenever the console changes so the binary includes fresh assets.
 - **Context:** Runtime deployment no longer needs a `frontend/dist` directory; release smoke test passed from a temporary directory containing only the copied binary and SQLite database.
+
+## [2026-05-19 14:22] Login Hero Redesign
+- **Changes:** Redesigned the logged-out Vue hero into a full-width immersive TokenAltar entrance, removed the auth-page sidebar brand block, simplified the hero copy to the product name and short mode labels, and restyled the login/register card for desktop and mobile.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Login/register bindings and API calls are unchanged; verification used `pnpm --dir frontend build` plus Playwright desktop/mobile screenshots.
