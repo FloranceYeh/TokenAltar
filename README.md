@@ -13,6 +13,7 @@ It serves an operational Vue console and OpenAI/Anthropic/Gemini-compatible gate
 - In-memory routing state for cooldowns, surge metrics, and LRU affinity cache.
 - MPSC ledger queue so gateway requests avoid synchronous high-frequency accounting writes.
 - Vue console for login/register, user management, API keys, channels, model prices, affinity rules, dashboard, ledger, settings, transfers, red packets, and leaderboards.
+- Authenticated SSE console updates through `/api/events`, so ledger settlement, channel health, settings, and account/economy mutations refresh the affected console panels without full-page polling.
 - Built Vue console assets are embedded into the Rust binary, so runtime deployment does not need a `frontend/dist` directory.
 
 ## Run
@@ -39,6 +40,7 @@ Run `pnpm --dir frontend build` before compiling Rust so the latest console asse
 
 Client requests must use `Authorization: Bearer sk-...`.
 Console sessions use `Authorization: Bearer ta-...`.
+The live console stream is `GET /api/events` with the same console bearer token and `Accept: text/event-stream`; events contain resource-topic invalidations, and clients should reload the existing REST endpoints for filtered data.
 
 Text protocol conversion supports text messages, image inputs, `system`, `temperature`, max token controls, and basic tool/function fields across OpenAI, Anthropic, and Gemini.
 Files, embeddings, rerank, realtime, audio, and other non-text extensions are intentionally outside the current gateway surface.
@@ -79,6 +81,7 @@ Startup-sized values such as ledger queue capacity and affinity cache capacity a
 - Channel health history is inferred from actual request outcomes rather than scheduled probes. Empty semantic replies and upstream failures are retained as window status samples, but they do not contribute to average TTFT.
 - Regular users can add and manage their own upstream channels. Console channel reads are owner-scoped for regular users and always redact upstream API keys.
 - Model prices are matched per channel first, then fall back to global model defaults managed by admins.
+- Console live updates are topic-based invalidations, not full data snapshots; REST endpoints remain the permission boundary for owner-scoped and admin-only data.
 - If no model price row matches, fallback input/output/cache rates come from Settings instead of code constants.
 - Invite-gated registration is controlled by `invite_required` and `invite_code_default` in the Settings tab.
 - Red packet claims are transaction guarded with unique `(packet, user)` claims.

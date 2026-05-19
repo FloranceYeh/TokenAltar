@@ -172,3 +172,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Verified with `pnpm --dir frontend build`, `cargo test`, `git diff --check`, and Playwright desktop/mobile screenshots against a temporary local backend.
+
+## [2026-05-19 22:58] Console Live Updates
+- **Changes:** Added an authenticated `/api/events` SSE stream, an in-process console event bus, mutation-triggered topic invalidations for ledger, channel health, settings, user, pricing, and economy changes, and a Vue fetch-stream subscriber that reloads only affected panels.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Events carry resource topics instead of snapshots, so existing REST endpoints remain the permission boundary for owner-scoped and admin-only console data.

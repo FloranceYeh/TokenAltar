@@ -1586,7 +1586,7 @@ impl Database {
         Ok(expires_at)
     }
 
-    pub async fn apply_ledger_event(&self, event: &LedgerEvent) -> AppResult<()> {
+    pub async fn apply_ledger_event(&self, event: &LedgerEvent) -> AppResult<bool> {
         let mut tx = self.pool.begin().await?;
         let inserted = sqlx::query(
             r#"
@@ -1621,7 +1621,7 @@ impl Database {
         .await?;
         if inserted.rows_affected() == 0 {
             tx.commit().await?;
-            return Ok(());
+            return Ok(false);
         }
 
         let point_delta = event.total_points - event.reservation.points;
@@ -1653,7 +1653,7 @@ impl Database {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 
     pub async fn list_ledger(&self, user_id: Option<i64>) -> AppResult<Vec<serde_json::Value>> {

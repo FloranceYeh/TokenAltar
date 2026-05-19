@@ -19,6 +19,7 @@ use crate::{
     billing::{LedgerSender, spawn_ledger_worker},
     config::Config,
     db::Database,
+    events::ConsoleEventBus,
     gateway,
     routing::RuntimeRouterState,
     state::MetricsState,
@@ -37,6 +38,7 @@ pub struct AppState {
     pub metrics: MetricsState,
     pub ledger_tx: LedgerSender,
     pub leaderboard_timezone: Option<String>,
+    pub events: ConsoleEventBus,
 }
 
 impl AppState {
@@ -48,8 +50,13 @@ impl AppState {
         db.refresh_channel_windows().await?;
         let settings = db.runtime_settings().await?;
         let metrics = MetricsState::default();
-        let ledger_tx =
-            spawn_ledger_worker(db.clone(), metrics.clone(), settings.ledger_queue_capacity);
+        let events = ConsoleEventBus::default();
+        let ledger_tx = spawn_ledger_worker(
+            db.clone(),
+            metrics.clone(),
+            events.clone(),
+            settings.ledger_queue_capacity,
+        );
         let http = Client::builder()
             .timeout(Duration::from_secs(120))
             .pool_idle_timeout(Duration::from_secs(30))
@@ -62,6 +69,7 @@ impl AppState {
             metrics,
             ledger_tx,
             leaderboard_timezone: config.leaderboard_timezone.clone(),
+            events,
         })
     }
 }
@@ -76,6 +84,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/register", post(crate::admin::register))
         .route("/auth/login", post(crate::admin::login))
         .route("/me", get(crate::admin::me))
+        .route("/events", get(crate::events::console_events))
         .route(
             "/users",
             get(crate::admin::list_users).post(crate::admin::create_user),

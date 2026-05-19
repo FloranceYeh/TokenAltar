@@ -19,6 +19,7 @@ use crate::{
     auth::GatewayAuth,
     db::ChannelHealthEventInput,
     error::{AppError, AppResult},
+    events::{TOPIC_CHANNELS, TOPIC_DASHBOARD, publish_channel_owner_event},
     models::{GatewayContext, GatewayReservation, LedgerEvent, ProviderKind, Usage},
     pricing::{fire_sale_discount, select_price, settle},
     protocol::{
@@ -417,7 +418,7 @@ async fn record_channel_health(
     decision: &RouteDecision,
     event: GatewayHealthEvent<'_>,
 ) {
-    let _ = state
+    if state
         .db
         .record_channel_health_event(ChannelHealthEventInput {
             channel_id: decision.channel.id,
@@ -428,7 +429,15 @@ async fn record_channel_health(
             total_latency_ms: event.total_latency_ms,
             error: event.error,
         })
-        .await;
+        .await
+        .is_ok()
+    {
+        publish_channel_owner_event(
+            state,
+            decision.channel.owner_user_id,
+            [TOPIC_DASHBOARD, TOPIC_CHANNELS],
+        );
+    }
 }
 
 struct GatewayHealthEvent<'a> {

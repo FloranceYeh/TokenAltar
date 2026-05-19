@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{collections::BTreeSet, time::Instant};
 
 use axum::{
     Json,
@@ -15,6 +15,12 @@ use crate::{
         SettingUpdate,
     },
     error::{AppError, AppResult},
+    events::{
+        TOPIC_AFFINITY_RULES, TOPIC_API_KEYS, TOPIC_CHANNELS, TOPIC_DASHBOARD, TOPIC_LEADERBOARDS,
+        TOPIC_ME, TOPIC_PRICES, TOPIC_REDPACKETS, TOPIC_RUNTIME_SETTINGS, TOPIC_SETTINGS,
+        TOPIC_TRANSFERS, TOPIC_USERS, publish_admin_event, publish_channel_owner_event,
+        publish_global_event, publish_user_event,
+    },
     gateway::surge_multiplier,
     models::{ModelPrice, User},
 };
@@ -127,6 +133,7 @@ pub async fn register(
         .create_user(&request.email, &request.password, &display_name)
         .await?;
     let token = state.db.create_session(user.id).await?;
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD]);
     Ok(Json(AuthResponse { token, user }))
 }
 
@@ -165,7 +172,9 @@ pub async fn create_user(
     Json(request): Json<ManagedUserCreateInput>,
 ) -> AppResult<Json<serde_json::Value>> {
     require_admin(&auth.user)?;
-    Ok(Json(json!(state.db.create_managed_user(request).await?)))
+    let user = state.db.create_managed_user(request).await?;
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD]);
+    Ok(Json(json!(user)))
 }
 
 pub async fn update_user(
@@ -175,12 +184,17 @@ pub async fn update_user(
     Json(request): Json<ManagedUserUpdateInput>,
 ) -> AppResult<Json<serde_json::Value>> {
     require_admin(&auth.user)?;
-    Ok(Json(json!(
-        state
-            .db
-            .update_managed_user(auth.user.id, id, request)
-            .await?
-    )))
+    let user = state
+        .db
+        .update_managed_user(auth.user.id, id, request)
+        .await?;
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD, TOPIC_CHANNELS]);
+    publish_user_event(
+        &state,
+        user.id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_API_KEYS, TOPIC_CHANNELS],
+    );
+    Ok(Json(json!(user)))
 }
 
 pub async fn set_user_enabled(
@@ -190,12 +204,17 @@ pub async fn set_user_enabled(
     Json(request): Json<EnabledRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     require_admin(&auth.user)?;
-    Ok(Json(json!(
-        state
-            .db
-            .set_user_enabled(auth.user.id, id, request.enabled)
-            .await?
-    )))
+    let user = state
+        .db
+        .set_user_enabled(auth.user.id, id, request.enabled)
+        .await?;
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD, TOPIC_CHANNELS]);
+    publish_user_event(
+        &state,
+        user.id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_API_KEYS, TOPIC_CHANNELS],
+    );
+    Ok(Json(json!(user)))
 }
 
 pub async fn reset_user_password(
@@ -218,7 +237,9 @@ pub async fn create_api_key(
         .db
         .create_api_key(auth.user.id, &request.name, request.spend_limit_points)
         .await?;
-    if request.enabled.is_some() || request.allowed_models.is_some() || request.expires_at.is_some()
+    let record = if request.enabled.is_some()
+        || request.allowed_models.is_some()
+        || request.expires_at.is_some()
     {
         let update = ApiKeyUpdateInput {
             name: record.name.clone(),
@@ -227,12 +248,15 @@ pub async fn create_api_key(
             expires_at: request.expires_at,
             allowed_models: request.allowed_models.unwrap_or_default(),
         };
-        let record = state
+        state
             .db
             .update_api_key(auth.user.id, record.id, update)
-            .await?;
-        return Ok(Json(json!({ "token": token, "record": record })));
-    }
+            .await?
+    } else {
+        record
+    };
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_API_KEYS]);
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD, TOPIC_API_KEYS]);
     Ok(Json(json!({ "token": token, "record": record })))
 }
 
@@ -254,6 +278,7 @@ pub async fn set_api_key_enabled(
         .db
         .set_api_key_enabled(auth.user.id, id, request.enabled)
         .await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_API_KEYS]);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -264,6 +289,7 @@ pub async fn update_api_key(
     Json(request): Json<ApiKeyUpdateInput>,
 ) -> AppResult<Json<serde_json::Value>> {
     let record = state.db.update_api_key(auth.user.id, id, request).await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_API_KEYS]);
     Ok(Json(json!(record)))
 }
 
@@ -273,6 +299,7 @@ pub async fn rotate_api_key(
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     let (token, record) = state.db.rotate_api_key(auth.user.id, id).await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_API_KEYS]);
     Ok(Json(json!({ "token": token, "record": record })))
 }
 
@@ -282,6 +309,7 @@ pub async fn delete_api_key(
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     state.db.delete_api_key(auth.user.id, id).await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_API_KEYS]);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -294,6 +322,7 @@ pub async fn batch_delete_api_keys(
         .db
         .batch_delete_api_keys(auth.user.id, &request.ids)
         .await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_API_KEYS]);
     Ok(Json(json!({ "deleted": count })))
 }
 
@@ -313,6 +342,11 @@ pub async fn create_channel(
     Json(request): Json<ChannelInput>,
 ) -> AppResult<Json<serde_json::Value>> {
     let channel = state.db.upsert_channel(auth.user.id, request).await?;
+    publish_channel_owner_event(
+        &state,
+        channel.owner_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS, TOPIC_PRICES],
+    );
     Ok(Json(json!(crate::models::PublicChannel::from(channel))))
 }
 
@@ -323,6 +357,11 @@ pub async fn update_channel(
     Json(request): Json<ChannelUpdateInput>,
 ) -> AppResult<Json<serde_json::Value>> {
     let channel = state.db.update_channel(&auth.user, id, request).await?;
+    publish_channel_owner_event(
+        &state,
+        channel.owner_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS, TOPIC_PRICES],
+    );
     Ok(Json(json!(channel)))
 }
 
@@ -336,6 +375,11 @@ pub async fn set_channel_enabled(
         .db
         .set_channel_enabled(&auth.user, id, request.enabled)
         .await?;
+    publish_channel_owner_event(
+        &state,
+        channel.owner_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS],
+    );
     Ok(Json(json!(channel)))
 }
 
@@ -344,7 +388,13 @@ pub async fn delete_channel(
     ConsoleAuth(auth): ConsoleAuth,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
+    let owner_user_id = state.db.get_channel(id).await?.owner_user_id;
     state.db.delete_channel(&auth.user, id).await?;
+    publish_channel_owner_event(
+        &state,
+        owner_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS],
+    );
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -353,10 +403,18 @@ pub async fn batch_set_channels_enabled(
     ConsoleAuth(auth): ConsoleAuth,
     Json(request): Json<ChannelBatchEnabledRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    let owner_user_ids = channel_owner_ids(&state, &request.ids).await?;
     let count = state
         .db
         .batch_set_channels_enabled(&auth.user, &request.ids, request.enabled)
         .await?;
+    for owner_user_id in owner_user_ids {
+        publish_channel_owner_event(
+            &state,
+            owner_user_id,
+            [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS],
+        );
+    }
     Ok(Json(json!({ "updated": count })))
 }
 
@@ -371,6 +429,11 @@ pub async fn copy_channel(
         .db
         .copy_channel(&auth.user, id, suffix, request.reset_usage.unwrap_or(true))
         .await?;
+    publish_channel_owner_event(
+        &state,
+        channel.owner_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS, TOPIC_PRICES],
+    );
     Ok(Json(json!(channel)))
 }
 
@@ -419,6 +482,11 @@ pub async fn test_channel(
             error: if ok { None } else { Some(message.as_str()) },
         })
         .await?;
+    publish_channel_owner_event(
+        &state,
+        channel.owner_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_CHANNELS],
+    );
     Ok(Json(json!({
         "ok": ok,
         "latency_ms": latency_ms,
@@ -438,15 +506,22 @@ pub async fn upsert_price(
     ConsoleAuth(auth): ConsoleAuth,
     Json(request): Json<ModelPrice>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if let Some(channel_id) = request.channel_id {
+    let owner_user_id = if let Some(channel_id) = request.channel_id {
         let channel = state.db.get_channel(channel_id).await?;
         if auth.user.role != "admin" && channel.owner_user_id != auth.user.id {
             return Err(AppError::Forbidden);
         }
+        Some(channel.owner_user_id)
     } else {
         require_admin(&auth.user)?;
-    }
+        None
+    };
     state.db.upsert_price(&request).await?;
+    if let Some(owner_user_id) = owner_user_id {
+        publish_channel_owner_event(&state, owner_user_id, [TOPIC_PRICES]);
+    } else {
+        publish_global_event(&state, [TOPIC_PRICES]);
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -464,6 +539,7 @@ pub async fn create_affinity_rule(
 ) -> AppResult<Json<serde_json::Value>> {
     require_admin(&auth.user)?;
     let rule = state.db.create_affinity_rule(request).await?;
+    publish_admin_event(&state, [TOPIC_AFFINITY_RULES]);
     Ok(Json(json!(rule)))
 }
 
@@ -515,6 +591,16 @@ pub async fn update_settings(
 ) -> AppResult<Json<serde_json::Value>> {
     require_admin(&auth.user)?;
     state.db.upsert_settings(&request).await?;
+    publish_global_event(
+        &state,
+        [
+            TOPIC_RUNTIME_SETTINGS,
+            TOPIC_DASHBOARD,
+            TOPIC_CHANNELS,
+            TOPIC_PRICES,
+        ],
+    );
+    publish_admin_event(&state, [TOPIC_SETTINGS]);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -527,6 +613,8 @@ pub async fn set_anonymous_leaderboard(
         .db
         .set_anonymous_leaderboard(auth.user.id, request.enabled)
         .await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME]);
+    publish_global_event(&state, [TOPIC_LEADERBOARDS]);
     Ok(Json(json!(user)))
 }
 
@@ -544,6 +632,17 @@ pub async fn transfer_points(
             request.memo.as_deref(),
         )
         .await?;
+    publish_user_event(
+        &state,
+        auth.user.id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_TRANSFERS],
+    );
+    publish_user_event(
+        &state,
+        request.to_user_id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_TRANSFERS],
+    );
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD]);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -569,6 +668,12 @@ pub async fn create_red_packet(
             &request.mode,
         )
         .await?;
+    publish_user_event(
+        &state,
+        auth.user.id,
+        [TOPIC_ME, TOPIC_DASHBOARD, TOPIC_REDPACKETS],
+    );
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD]);
     Ok(Json(json!({ "phrase": request.phrase })))
 }
 
@@ -577,10 +682,18 @@ pub async fn claim_red_packet(
     ConsoleAuth(auth): ConsoleAuth,
     Json(request): Json<ClaimRedPacketRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    let creator_user_id = red_packet_creator_user_id(&state, &request.phrase).await?;
     let points = state
         .db
         .claim_red_packet(auth.user.id, &request.phrase)
         .await?;
+    publish_user_event(&state, auth.user.id, [TOPIC_ME, TOPIC_DASHBOARD]);
+    if let Some(creator_user_id) = creator_user_id
+        && creator_user_id != auth.user.id
+    {
+        publish_user_event(&state, creator_user_id, [TOPIC_DASHBOARD, TOPIC_REDPACKETS]);
+    }
+    publish_admin_event(&state, [TOPIC_USERS, TOPIC_DASHBOARD]);
     Ok(Json(json!({ "points": points })))
 }
 
@@ -604,6 +717,26 @@ pub async fn leaderboards(
             .leaderboards(period, state.leaderboard_timezone.as_deref())
             .await?,
     ))
+}
+
+async fn channel_owner_ids(state: &crate::app::AppState, ids: &[i64]) -> AppResult<Vec<i64>> {
+    let mut owner_user_ids = BTreeSet::new();
+    for id in ids {
+        owner_user_ids.insert(state.db.get_channel(*id).await?.owner_user_id);
+    }
+    Ok(owner_user_ids.into_iter().collect())
+}
+
+async fn red_packet_creator_user_id(
+    state: &crate::app::AppState,
+    phrase: &str,
+) -> AppResult<Option<i64>> {
+    Ok(
+        sqlx::query_scalar("SELECT creator_user_id FROM red_packets WHERE phrase = ?")
+            .bind(phrase)
+            .fetch_optional(&state.db.pool)
+            .await?,
+    )
 }
 
 fn provider_test_headers(

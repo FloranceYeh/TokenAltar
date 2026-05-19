@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 type User = {
   id: number
@@ -59,6 +59,11 @@ type LeaderboardPayload = {
   window_start?: string
   providers: LeaderboardRow[]
   consumers: LeaderboardRow[]
+}
+
+type ConsoleUpdateEvent = {
+  id?: number
+  topics?: string[]
 }
 
 type ChannelHealthWindow = {
@@ -141,6 +146,11 @@ const apiKeyFilter = ref('')
 const channelFilter = ref('')
 const healthFilter = ref('')
 const userFilter = ref('')
+
+const pendingConsoleTopics = new Set<string>()
+let consoleEventAbort: AbortController | null = null
+let consoleReconnectTimer: number | null = null
+let consoleRefreshTimer: number | null = null
 
 const loginForm = reactive({ email: '', password: '' })
 const registerForm = reactive({ email: '', password: '', display_name: '', invite_code: '' })
@@ -512,9 +522,11 @@ async function acceptAuth(data: any) {
   user.value = data.user
   localStorage.setItem('tokenaltar_token', data.token)
   await refreshAll()
+  startConsoleEventStream()
 }
 
 function logout() {
+  stopConsoleEventStream()
   token.value = ''
   user.value = null
   activeTab.value = 'dashboard'
@@ -545,6 +557,151 @@ async function refreshAll() {
       loadLeaderboards(),
       isAdmin.value ? loadSettings() : Promise.resolve(),
     ])
+  } catch (err) {
+    error.value = String(err)
+    logout()
+  }
+}
+
+function startConsoleEventStream() {
+  if (!token.value) return
+  stopConsoleEventStream()
+  const controller = new AbortController()
+  consoleEventAbort = controller
+  void consumeConsoleEventStream(controller)
+}
+
+function stopConsoleEventStream() {
+  if (consoleEventAbort) {
+    consoleEventAbort.abort()
+    consoleEventAbort = null
+  }
+  if (consoleReconnectTimer !== null) {
+    window.clearTimeout(consoleReconnectTimer)
+    consoleReconnectTimer = null
+  }
+  if (consoleRefreshTimer !== null) {
+    window.clearTimeout(consoleRefreshTimer)
+    consoleRefreshTimer = null
+  }
+  pendingConsoleTopics.clear()
+}
+
+async function consumeConsoleEventStream(controller: AbortController) {
+  try {
+    const response = await fetch('/api/events', {
+      headers: {
+        accept: 'text/event-stream',
+        authorization: `Bearer ${token.value}`,
+      },
+      signal: controller.signal,
+    })
+    if (response.status === 401 || response.status === 403) {
+      logout()
+      return
+    }
+    if (!response.ok || !response.body) {
+      throw new Error(response.statusText || 'event stream unavailable')
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let streamClosed = false
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) {
+        streamClosed = true
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+      buffer = drainConsoleEventFrames(buffer)
+    }
+    buffer += decoder.decode()
+    drainConsoleEventFrames(buffer)
+    if (streamClosed && !controller.signal.aborted && token.value) {
+      scheduleConsoleEventReconnect()
+    }
+  } catch {
+    if (!controller.signal.aborted && token.value) {
+      scheduleConsoleEventReconnect()
+    }
+  } finally {
+    if (consoleEventAbort === controller) {
+      consoleEventAbort = null
+    }
+  }
+}
+
+function scheduleConsoleEventReconnect() {
+  if (consoleReconnectTimer !== null || !token.value) return
+  consoleReconnectTimer = window.setTimeout(() => {
+    consoleReconnectTimer = null
+    startConsoleEventStream()
+  }, 2000)
+}
+
+function drainConsoleEventFrames(buffer: string) {
+  const normalized = buffer.replace(/\r\n/g, '\n')
+  const frames = normalized.split('\n\n')
+  const remainder = frames.pop() || ''
+  for (const frame of frames) {
+    handleConsoleEventFrame(frame)
+  }
+  return remainder
+}
+
+function handleConsoleEventFrame(frame: string) {
+  const data = frame
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+  if (!data) return
+  try {
+    const event = JSON.parse(data) as ConsoleUpdateEvent
+    queueConsoleTopicRefresh(event.topics || [])
+  } catch {
+    queueConsoleTopicRefresh(['sync'])
+  }
+}
+
+function queueConsoleTopicRefresh(topics: string[]) {
+  for (const topic of topics) {
+    if (topic !== 'connected') {
+      pendingConsoleTopics.add(topic)
+    }
+  }
+  if (pendingConsoleTopics.size === 0 || consoleRefreshTimer !== null) return
+  consoleRefreshTimer = window.setTimeout(() => {
+    consoleRefreshTimer = null
+    void flushConsoleTopicRefresh()
+  }, 250)
+}
+
+async function flushConsoleTopicRefresh() {
+  if (!token.value) return
+  const topics = new Set(pendingConsoleTopics)
+  pendingConsoleTopics.clear()
+  try {
+    if (topics.has('sync')) {
+      await refreshAll()
+      return
+    }
+    const tasks: Promise<unknown>[] = []
+    if (topics.has('me')) tasks.push(refreshMe().then(ensureAllowedTab))
+    if (topics.has('runtimeSettings')) tasks.push(loadRuntimeSettings())
+    if (topics.has('dashboard')) tasks.push(loadDashboard())
+    if (topics.has('users') && isAdmin.value) tasks.push(loadUsers())
+    if (topics.has('apiKeys')) tasks.push(loadApiKeys())
+    if (topics.has('channels')) tasks.push(loadChannels())
+    if (topics.has('prices')) tasks.push(loadPrices())
+    if (topics.has('affinityRules') && isAdmin.value) tasks.push(loadRules())
+    if (topics.has('ledger')) tasks.push(loadLedger())
+    if (topics.has('transfers')) tasks.push(loadTransfers())
+    if (topics.has('redPackets')) tasks.push(loadRedPackets())
+    if (topics.has('leaderboards')) tasks.push(loadLeaderboards())
+    if (topics.has('settings') && isAdmin.value) tasks.push(loadSettings())
+    await Promise.all(tasks)
   } catch (err) {
     error.value = String(err)
     logout()
@@ -1247,7 +1404,11 @@ function statusClass(record: any) {
   }
 }
 
-onMounted(refreshAll)
+onMounted(async () => {
+  await refreshAll()
+  if (token.value) startConsoleEventStream()
+})
+onBeforeUnmount(stopConsoleEventStream)
 </script>
 
 <template>

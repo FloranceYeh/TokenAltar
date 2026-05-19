@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use axum::{body::Body, http::StatusCode};
+use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokenaltar::{
     app::{AppState, build_router},
@@ -995,6 +998,71 @@ async fn frontend_assets_are_served_from_embedded_binary() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn console_events_push_channel_topic_invalidations() {
+    let state = setup_state().await;
+    let admin = state
+        .db
+        .find_user_with_hash("admin@example.com")
+        .await
+        .unwrap()
+        .unwrap()
+        .0;
+    let session = state.db.create_session(admin.id).await.unwrap();
+    let app = build_router(state);
+
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/events")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut body = response.into_body();
+    let connected = next_sse_chunk(&mut body).await;
+    assert!(connected.contains("connected"));
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/channels")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    json!({
+                        "name": "live",
+                        "provider": "openai",
+                        "base_url": "http://127.0.0.1:9",
+                        "api_key_secret": "live-secret",
+                        "models": ["gpt-live"],
+                        "enabled": true,
+                        "windows": quota_windows_json(1500),
+                        "fire_sale_days_before": 3,
+                        "fire_sale_remaining_pct": 0.25,
+                        "fire_sale_discount": 0.2,
+                        "provider_share": 0.7
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let update = next_sse_chunk(&mut body).await;
+    assert!(update.contains("channels"));
+    assert!(update.contains("dashboard"));
+}
+
 async fn setup_state() -> AppState {
     let config = Config {
         bind: "127.0.0.1:0".parse().unwrap(),
@@ -1042,6 +1110,16 @@ async fn setup_state() -> AppState {
         .await
         .unwrap();
     state
+}
+
+async fn next_sse_chunk(body: &mut Body) -> String {
+    let frame = tokio::time::timeout(Duration::from_secs(1), body.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let data = frame.into_data().unwrap();
+    String::from_utf8(data.to_vec()).unwrap()
 }
 
 fn token_hash(token: &str) -> String {
