@@ -119,3 +119,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Backend leaderboard semantics are unchanged; verification used a temporary `/tmp` SQLite database with seeded demo ledger rows for visual inspection.
+
+## [2026-05-19 13:31] Embedded Frontend Assets
+- **Changes:** Embedded the built Vue console assets into the Rust binary with `rust-embed`, replaced the runtime `ServeDir` fallback with an embedded asset handler, removed the `TOKENALTAR_FRONTEND_DIST` runtime config, and added an integration test for SPA fallback from embedded assets.
+- **Status:** Completed
+- **Next Steps:** Run `pnpm --dir frontend build` before compiling Rust whenever the console changes so the binary includes fresh assets.
+- **Context:** Runtime deployment no longer needs a `frontend/dist` directory; release smoke test passed from a temporary directory containing only the copied binary and SQLite database.

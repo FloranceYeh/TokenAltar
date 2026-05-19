@@ -2,13 +2,15 @@ use std::time::Duration;
 
 use axum::{
     Router,
-    http::{HeaderName, HeaderValue, Method, header},
+    body::Body,
+    http::{HeaderName, HeaderValue, Method, StatusCode, Uri, header},
+    response::Response,
     routing::{get, post},
 };
 use reqwest::Client;
+use rust_embed::Embed;
 use tower_http::{
     cors::{Any, CorsLayer},
-    services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
 
@@ -21,6 +23,10 @@ use crate::{
     routing::RuntimeRouterState,
     state::MetricsState,
 };
+
+#[derive(Embed)]
+#[folder = "frontend/dist/"]
+struct FrontendAssets;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,7 +64,7 @@ impl AppState {
     }
 }
 
-pub fn build_router(state: AppState, config: &Config) -> Router {
+pub fn build_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers(Any)
@@ -132,9 +138,6 @@ pub fn build_router(state: AppState, config: &Config) -> Router {
         .route("/red-packets/claim", post(crate::admin::claim_red_packet))
         .route("/leaderboards", get(crate::admin::leaderboards));
 
-    let static_service = ServeDir::new(&config.frontend_dist)
-        .not_found_service(ServeFile::new(config.frontend_dist.join("index.html")));
-
     Router::new()
         .nest("/api", api)
         .route(
@@ -147,10 +150,86 @@ pub fn build_router(state: AppState, config: &Config) -> Router {
             "/v1beta/models/{model_action}",
             post(gateway::gemini_generate_content),
         )
-        .fallback_service(static_service)
+        .fallback(embedded_frontend)
         .with_state(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+}
+
+async fn embedded_frontend(uri: Uri) -> Response {
+    let path = normalize_asset_path(uri.path());
+    if let Some(response) = embedded_asset_response(&path, StatusCode::OK) {
+        return response;
+    }
+    if looks_like_static_asset(&path) {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .expect("static 404 response is valid");
+    }
+    embedded_asset_response("index.html", StatusCode::OK).unwrap_or_else(|| {
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::from("embedded frontend index.html is missing"))
+            .expect("static 500 response is valid")
+    })
+}
+
+fn normalize_asset_path(path: &str) -> String {
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return "index.html".to_string();
+    }
+    if trimmed
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return "index.html".to_string();
+    }
+    trimmed.to_string()
+}
+
+fn embedded_asset_response(path: &str, status: StatusCode) -> Option<Response> {
+    let asset = FrontendAssets::get(path)?;
+    let mut response = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type(path))
+        .body(Body::from(asset.data.into_owned()))
+        .expect("embedded asset response is valid");
+    if is_cacheable_asset(path) {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    Some(response)
+}
+
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or_default() {
+        "css" => "text/css; charset=utf-8",
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        "txt" => "text/plain; charset=utf-8",
+        "wasm" => "application/wasm",
+        "webp" => "image/webp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+fn looks_like_static_asset(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|name| name.contains('.'))
+}
+
+fn is_cacheable_asset(path: &str) -> bool {
+    path != "index.html"
 }
 
 pub fn copy_passthrough_headers(headers: &axum::http::HeaderMap) -> axum::http::HeaderMap {

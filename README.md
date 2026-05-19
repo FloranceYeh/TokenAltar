@@ -13,6 +13,7 @@ It serves an operational Vue console and OpenAI/Anthropic/Gemini-compatible gate
 - In-memory routing state for cooldowns, surge metrics, and LRU affinity cache.
 - MPSC ledger queue so gateway requests avoid synchronous high-frequency accounting writes.
 - Vue console for login/register, API keys, channels, model prices, affinity rules, dashboard, ledger, settings, transfers, red packets, and leaderboards.
+- Built Vue console assets are embedded into the Rust binary, so runtime deployment does not need a `frontend/dist` directory.
 
 ## Run
 
@@ -25,12 +26,12 @@ cargo run
 ```
 
 The server listens on `127.0.0.1:8080` by default and stores data in `tokenaltar.sqlite3`.
+Run `pnpm --dir frontend build` before compiling Rust so the latest console assets are embedded into the binary.
 
 ## Environment
 
 - `TOKENALTAR_BIND`: bind address, default `127.0.0.1:8080`.
 - `TOKENALTAR_DATABASE_URL`: SQLite URL, default `sqlite://tokenaltar.sqlite3`.
-- `TOKENALTAR_FRONTEND_DIST`: built Vue directory, default `frontend/dist`.
 - `TOKENALTAR_ADMIN_EMAIL` and `TOKENALTAR_ADMIN_PASSWORD`: create the first admin if missing.
 - `TOKENALTAR_LEADERBOARD_TIMEZONE`: optional IANA timezone for day/month leaderboard windows, for example `Asia/Shanghai`; defaults to the server local timezone.
 

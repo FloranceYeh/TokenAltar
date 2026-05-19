@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let state = app::AppState::new(&config).await?;
-    let router = app::build_router(state, &config);
+    let router = app::build_router(state);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!("TokenAltar listening on http://{}", config.bind);
     axum::serve(listener, router).await?;

@@ -20,7 +20,7 @@ async fn openai_responses_gateway_settles_ledger_and_limits() {
     }))
     .await;
     let (state, token) = setup_state(upstream).await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -62,7 +62,7 @@ async fn anthropic_messages_gateway_converts_response_shape() {
     }))
     .await;
     let (state, token) = setup_state(upstream).await;
-    let app = build_router(state, &test_config("unused"));
+    let app = build_router(state);
 
     let response = app
         .oneshot(
@@ -103,7 +103,7 @@ async fn chat_completions_gateway_converts_response_shape_and_records_tokenizer(
     }))
     .await;
     let (state, token) = setup_state(upstream).await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -155,7 +155,7 @@ async fn exhausted_channel_is_marked_unavailable() {
         .await
         .unwrap();
     state.db.refresh_channel_windows().await.unwrap();
-    let app = build_router(state, &test_config("unused"));
+    let app = build_router(state);
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -205,7 +205,7 @@ async fn channel_price_override_is_used_for_settlement() {
         })
         .await
         .unwrap();
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -238,7 +238,7 @@ async fn channel_price_override_is_used_for_settlement() {
 async fn openai_responses_to_openai_channel_is_passthrough() {
     let upstream = spawn_echo_upstream().await;
     let (state, token) = setup_state(upstream).await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -278,7 +278,7 @@ async fn openai_responses_to_openai_channel_is_passthrough() {
 async fn openai_chat_can_route_to_gemini_text_channel() {
     let upstream = spawn_gemini_echo_upstream().await;
     let (state, token) = setup_state_with_provider(upstream, "gemini").await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -318,7 +318,7 @@ async fn openai_responses_with_image_routes_to_gemini_inline_data() {
     let image_url = spawn_image_source_upstream().await;
     let upstream = spawn_gemini_image_upstream().await;
     let (state, token) = setup_state_with_provider(upstream, "gemini").await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -362,7 +362,7 @@ async fn openai_responses_with_image_routes_to_gemini_inline_data() {
 async fn gemini_to_gemini_channel_is_passthrough_without_internal_fields() {
     let upstream = spawn_gemini_passthrough_upstream().await;
     let (state, token) = setup_state_with_provider(upstream, "gemini").await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -405,7 +405,7 @@ async fn gemini_to_gemini_channel_is_passthrough_without_internal_fields() {
 async fn gemini_to_gemini_image_passthrough_keeps_file_data() {
     let upstream = spawn_gemini_image_passthrough_upstream().await;
     let (state, token) = setup_state_with_provider(upstream, "gemini").await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .oneshot(
@@ -458,7 +458,7 @@ async fn affinity_429_retries_backup_channel_and_switches_binding() {
     let first_channel_id = 1;
     let backup_channel_id = add_test_channel(&state, backup, "openai").await;
     let cache_key = bind_tenant_affinity(&state, first_channel_id, false).await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
 
@@ -511,7 +511,7 @@ async fn affinity_5xx_retries_backup_channel_before_returning_to_client() {
     let (state, token) = setup_state(failing).await;
     let backup_channel_id = add_test_channel(&state, backup, "openai").await;
     bind_tenant_affinity(&state, 1, false).await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
 
@@ -537,7 +537,7 @@ async fn affinity_skip_retry_on_failure_returns_bound_channel_error() {
     let (state, token) = setup_state(failing).await;
     let backup_channel_id = add_test_channel(&state, backup, "openai").await;
     let cache_key = bind_tenant_affinity(&state, 1, true).await;
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
 
@@ -712,7 +712,6 @@ fn test_config(database_url: &str) -> Config {
         database_url: database_url.to_string(),
         admin_email: None,
         admin_password: None,
-        frontend_dist: "frontend/dist".into(),
         leaderboard_timezone: None,
     }
 }

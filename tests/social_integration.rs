@@ -181,7 +181,7 @@ async fn users_create_channels_and_list_only_their_masked_channels() {
         )
         .await
         .unwrap();
-    let app = build_router(state, &test_config("unused"));
+    let app = build_router(state);
 
     let response = app
         .clone()
@@ -268,14 +268,7 @@ async fn gateway_reservation_can_be_released_without_leaking_usage() {
         2.5
     );
     assert_eq!(
-        state
-            .db
-            .get_channel(1)
-            .await
-            .unwrap()
-            .limits
-            .windows[0]
-            .used_tokens,
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
         25
     );
 
@@ -293,14 +286,7 @@ async fn gateway_reservation_can_be_released_without_leaking_usage() {
         0.0
     );
     assert_eq!(
-        state
-            .db
-            .get_channel(1)
-            .await
-            .unwrap()
-            .limits
-            .windows[0]
-            .used_tokens,
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
         0
     );
 }
@@ -444,14 +430,7 @@ async fn ledger_settlement_applies_only_reservation_delta() {
         1.5
     );
     assert_eq!(
-        state
-            .db
-            .get_channel(1)
-            .await
-            .unwrap()
-            .limits
-            .windows[0]
-            .used_tokens,
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
         12
     );
 }
@@ -470,7 +449,7 @@ async fn api_key_management_updates_rotates_and_soft_deletes_keys() {
         .create_api_key(alice.id, "mutable", Some(100.0))
         .await
         .unwrap();
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .clone()
@@ -642,7 +621,7 @@ async fn channel_management_updates_copies_batches_and_soft_deletes() {
         )
         .await
         .unwrap();
-    let app = build_router(state.clone(), &test_config("unused"));
+    let app = build_router(state.clone());
 
     let response = app
         .clone()
@@ -737,13 +716,50 @@ async fn channel_management_updates_copies_batches_and_soft_deletes() {
     assert!(visible.iter().all(|item| item.id != copied_id));
 }
 
+#[tokio::test]
+async fn frontend_assets_are_served_from_embedded_binary() {
+    let state = setup_state().await;
+    let app = build_router(state);
+
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+    assert!(html.contains(r#"<div id="app"></div>"#));
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/console/channels")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 async fn setup_state() -> AppState {
     let config = Config {
         bind: "127.0.0.1:0".parse().unwrap(),
         database_url: "sqlite::memory:".to_string(),
         admin_email: None,
         admin_password: None,
-        frontend_dist: "frontend/dist".into(),
         leaderboard_timezone: None,
     };
     let state = AppState::new(&config).await.unwrap();
@@ -831,15 +847,4 @@ fn quota_windows_json(limit_tokens: i64) -> Value {
             "timezone": "UTC"
         }
     ])
-}
-
-fn test_config(database_url: &str) -> Config {
-    Config {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        database_url: database_url.to_string(),
-        admin_email: None,
-        admin_password: None,
-        frontend_dist: "frontend/dist".into(),
-        leaderboard_timezone: None,
-    }
 }
