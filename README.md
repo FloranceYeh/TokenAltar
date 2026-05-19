@@ -63,7 +63,8 @@ Owners can edit provider, URL, model coverage, arbitrary quota windows, fire-sal
 Each quota window defines a token limit, period unit/count, anchor timestamp, and IANA timezone; every configured window is enforced.
 When editing an existing channel, an empty `api_key_secret` keeps the stored upstream secret.
 The console also exposes channel clone, health test, per-row enable/disable, batch enable/disable, and soft delete operations.
-Health tests record `health_checked_at`, `upstream_latency_ms`, and `last_error` for operator visibility; they do not automatically disable routing.
+Channel health is passive by default: real gateway attempts append health events for `available`, `empty`, `degraded`, and `down` outcomes while manual health tests remain an explicit operator action.
+The channel list returns 48 fixed 30-minute health windows; each window averages TTFT from successful non-empty events only, excludes failed or empty events from the TTFT average, and renders windows with no records as gray.
 
 Runtime settings are managed from `/api/settings`, with the current typed view available at `/api/runtime-settings`.
 Admins can configure seed balances, pricing units and fallback prices, settlement rounding, surge thresholds and multipliers, routing retry/cooldown/weight knobs, ledger/cache capacities, and console defaults for new keys and channels.
@@ -74,6 +75,7 @@ Startup-sized values such as ledger queue capacity and affinity cache capacity a
 
 - Channel token windows are refreshed on startup, dashboard/channel reads, and gateway requests.
 - Channel status moves to `cooling` when any configured quota window is exhausted.
+- Channel health history is inferred from actual request outcomes rather than scheduled probes. Empty semantic replies and upstream failures are retained as window status samples, but they do not contribute to average TTFT.
 - Regular users can add and manage their own upstream channels. Console channel reads are owner-scoped for regular users and always redact upstream API keys.
 - Model prices are matched per channel first, then fall back to global model defaults managed by admins.
 - If no model price row matches, fallback input/output/cache rates come from Settings instead of code constants.

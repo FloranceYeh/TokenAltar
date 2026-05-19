@@ -665,6 +665,34 @@ async fn semantic_empty_response_retries_backup_channel() {
         state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
         0
     );
+    let user = state
+        .db
+        .find_user_with_hash("admin@example.com")
+        .await
+        .unwrap()
+        .unwrap()
+        .0;
+    let channels = state.db.list_public_channels(&user).await.unwrap();
+    let empty_window = channels
+        .iter()
+        .find(|channel| channel.id == 1)
+        .unwrap()
+        .health_windows
+        .iter()
+        .find(|window| window.empty_count > 0)
+        .unwrap();
+    assert_eq!(empty_window.status, "empty");
+    assert_eq!(empty_window.avg_ttft_ms, None);
+    let backup_window = channels
+        .iter()
+        .find(|channel| channel.id == backup_channel_id)
+        .unwrap()
+        .health_windows
+        .iter()
+        .find(|window| window.success_count > 0)
+        .unwrap();
+    assert_eq!(backup_window.status, "available");
+    assert!(backup_window.avg_ttft_ms.is_some());
 }
 
 #[tokio::test]

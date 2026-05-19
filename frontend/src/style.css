@@ -1396,6 +1396,97 @@ td:first-child {
   overflow-wrap: anywhere;
 }
 
+.health-cell {
+  width: 242px;
+  min-width: 242px;
+  max-width: 242px;
+}
+
+.health-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 7px;
+}
+
+.health-summary strong {
+  font-size: 0.82rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.health-summary span {
+  min-width: 0;
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-strip {
+  display: grid;
+  grid-template-columns: repeat(48, 1fr);
+  gap: 2px;
+  width: 100%;
+  height: 23px;
+  align-items: stretch;
+  padding: 3px;
+  border: 1px solid rgba(103, 85, 65, 0.16);
+  border-radius: 7px;
+  background: rgba(255, 250, 239, 0.72);
+  box-shadow: inset 0 1px 2px rgba(70, 42, 19, 0.06);
+}
+
+.health-window {
+  display: block;
+  min-width: 2px;
+  border-radius: 2px;
+  background: rgba(103, 85, 65, 0.2);
+}
+
+.health-window.gray {
+  background: rgba(103, 85, 65, 0.22);
+}
+
+.health-window.olive {
+  background: linear-gradient(180deg, #829565, #536348);
+}
+
+.health-window.gold {
+  background: linear-gradient(180deg, #dfb55f, #a06b24);
+}
+
+.health-window.lapis {
+  background: linear-gradient(180deg, #6f91ad, #274d6e);
+}
+
+.health-window.wine {
+  background: linear-gradient(180deg, #b15b65, #722f37);
+}
+
+.tone-gray {
+  color: var(--ink-muted);
+}
+
+.tone-olive {
+  color: var(--olive);
+}
+
+.tone-gold {
+  color: #8a5a1f;
+}
+
+.tone-lapis {
+  color: var(--lapis);
+}
+
+.tone-wine {
+  color: var(--wine);
+}
+
 .muted-cell,
 .empty-row {
   color: var(--ink-muted);
@@ -1758,7 +1849,12 @@ button.danger:hover:not(:disabled) {
   }
 
   .management-table {
-    min-width: 900px;
+    min-width: 1080px;
+  }
+
+  .health-cell {
+    min-width: 220px;
+    max-width: 220px;
   }
 }
 

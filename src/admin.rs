@@ -10,8 +10,9 @@ use serde_json::json;
 use crate::{
     auth::{ConsoleAuth, require_admin, verify_password},
     db::{
-        AffinityRuleInput, ApiKeyUpdateInput, ChannelInput, ChannelUpdateInput,
-        ManagedUserCreateInput, ManagedUserUpdateInput, PasswordResetInput, SettingUpdate,
+        AffinityRuleInput, ApiKeyUpdateInput, ChannelHealthEventInput, ChannelInput,
+        ChannelUpdateInput, ManagedUserCreateInput, ManagedUserUpdateInput, PasswordResetInput,
+        SettingUpdate,
     },
     error::{AppError, AppResult},
     gateway::surge_multiplier,
@@ -408,7 +409,15 @@ pub async fn test_channel(
     };
     state
         .db
-        .record_channel_health(id, latency_ms, if ok { None } else { Some(&message) })
+        .record_channel_health_event(ChannelHealthEventInput {
+            channel_id: id,
+            request_id: None,
+            status: if ok { "available" } else { "down" },
+            http_status: None,
+            ttft_ms: if ok { Some(latency_ms) } else { None },
+            total_latency_ms: Some(latency_ms),
+            error: if ok { None } else { Some(message.as_str()) },
+        })
         .await?;
     Ok(Json(json!({
         "ok": ok,

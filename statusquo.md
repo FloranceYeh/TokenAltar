@@ -155,3 +155,8 @@
 - **Status:** Completed
 - **Next Steps:** Tune the semantic detector if future gateway support adds non-text multimodal assistant outputs beyond the current text/tool surface.
 - **Context:** Whitespace-only text deltas, heartbeat/comment frames, usage-only frames, and terminal markers are empty; once text or tool-call semantics are forwarded, the gateway does not replay the stream.
+## [2026-05-19 19:40] Passive Channel Health Windows
+- **Changes:** Added `channel_health_events` storage, passive gateway health event recording, time-window aggregation on public channel reads, and a compact channel health strip in the console. Documented the passive window semantics in `README.md` and added gateway integration coverage for empty-response windows and success TTFT.
+- **Status:** Completed
+- **Next Steps:** Continue watching real traffic to tune window size or retention if the console needs a longer historical horizon.
+- **Context:** Health windows are fixed 30-minute UTC buckets over the most recent 24 hours. TTFT averages include successful non-empty events only; failed, degraded, and empty events affect status color/counts but not TTFT.

@@ -60,6 +60,24 @@ type LeaderboardPayload = {
   consumers: LeaderboardRow[]
 }
 
+type ChannelHealthWindow = {
+  window_start_at: string
+  window_end_at: string
+  status: 'available' | 'empty' | 'degraded' | 'down' | 'unknown'
+  sample_count: number
+  success_count: number
+  empty_count: number
+  degraded_count: number
+  down_count: number
+  avg_ttft_ms: number | null
+}
+
+type ChannelHealthSummary = {
+  label: string
+  detail: string
+  tone: 'gray' | 'olive' | 'gold' | 'lapis' | 'wine'
+}
+
 type RankedLeaderboardRow = LeaderboardRow & {
   key: string
   rank: number
@@ -1005,12 +1023,65 @@ function optionalNumber(value: number | string | null) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function healthLabel(channel: any) {
-  if (channelTestResults.value[channel.id]) return channelTestResults.value[channel.id]
-  if (channel.last_error) return channel.last_error
-  if (channel.upstream_latency_ms) return `${channel.upstream_latency_ms}ms`
-  if (channel.health_checked_at) return `checked ${channel.health_checked_at}`
-  return '-'
+function healthWindows(channel: any): ChannelHealthWindow[] {
+  return Array.isArray(channel.health_windows) ? channel.health_windows : []
+}
+
+function healthSummary(channel: any): ChannelHealthSummary {
+  const windows = healthWindows(channel)
+  const current = windows[windows.length - 1]
+  if (current && current.sample_count > 0) {
+    const labelByStatus: Record<ChannelHealthWindow['status'], string> = {
+      available: 'Available',
+      empty: 'Empty',
+      degraded: 'Degraded',
+      down: 'Down',
+      unknown: 'Gray',
+    }
+    const toneByStatus: Record<ChannelHealthWindow['status'], ChannelHealthSummary['tone']> = {
+      available: 'olive',
+      empty: 'gold',
+      degraded: 'lapis',
+      down: 'wine',
+      unknown: 'gray',
+    }
+    const ttft = current.avg_ttft_ms === null ? 'TTFT n/a' : `TTFT ${fmt(current.avg_ttft_ms, 0)}ms`
+    const sample = `${current.sample_count} sample${current.sample_count === 1 ? '' : 's'}`
+    return {
+      label: labelByStatus[current.status],
+      detail: `${sample} · ${ttft}`,
+      tone: toneByStatus[current.status],
+    }
+  }
+  return {
+    label: 'Gray',
+    detail: 'No records in current window',
+    tone: 'gray',
+  }
+}
+
+function healthBarClass(window: ChannelHealthWindow) {
+  return {
+    gray: window.sample_count === 0 || window.status === 'unknown',
+    olive: window.status === 'available' && window.success_count > 0 && window.empty_count === 0 && window.degraded_count === 0 && window.down_count === 0,
+    gold: window.status === 'empty' || (window.status === 'available' && window.empty_count > 0),
+    lapis: window.status === 'degraded' || (window.status === 'available' && window.degraded_count > 0),
+    wine: window.status === 'down' || (window.status === 'available' && window.down_count > 0),
+  }
+}
+
+function healthWindowTitle(window: ChannelHealthWindow) {
+  const ttft = window.avg_ttft_ms === null ? 'TTFT n/a' : `TTFT ${fmt(window.avg_ttft_ms, 0)}ms`
+  return [
+    `${window.window_start_at} → ${window.window_end_at}`,
+    `status: ${window.status}`,
+    `samples: ${window.sample_count}`,
+    `available: ${window.success_count}`,
+    `empty: ${window.empty_count}`,
+    `degraded: ${window.degraded_count}`,
+    `down: ${window.down_count}`,
+    ttft,
+  ].join(' · ')
 }
 
 function primaryWindow(channel: any) {
@@ -1357,7 +1428,21 @@ onMounted(refreshAll)
                   <td class="nowrap">{{ primaryWindow(channel) ? fmt(primaryWindow(channel).limit_tokens - primaryWindow(channel).used_tokens, 0) : '-' }}</td>
                   <td class="wrap-cell">{{ quotaSummary(channel) }}</td>
                   <td class="wrap-cell">{{ channel.models.join(', ') || '*' }}</td>
-                  <td class="wrap-cell">{{ healthLabel(channel) }}</td>
+                  <td class="health-cell">
+                    <div class="health-summary">
+                      <strong :class="`tone-${healthSummary(channel).tone}`">{{ healthSummary(channel).label }}</strong>
+                      <span>{{ healthSummary(channel).detail }}</span>
+                    </div>
+                    <div class="health-strip" :aria-label="`Channel health windows for ${channel.name}`">
+                      <span
+                        v-for="window in healthWindows(channel)"
+                        :key="`${channel.id}:${window.window_start_at}`"
+                        class="health-window"
+                        :class="healthBarClass(window)"
+                        :title="healthWindowTitle(window)"
+                      ></span>
+                    </div>
+                  </td>
                   <td>
                     <div class="row-actions">
                       <button class="ghost" @click="toggleChannel(channel)">{{ channel.enabled ? 'Disable' : 'Enable' }}</button>

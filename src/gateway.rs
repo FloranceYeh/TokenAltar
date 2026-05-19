@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Json,
@@ -17,6 +17,7 @@ use crate::{
     affinity::{lookup_affinity, remember_affinity},
     app::AppState,
     auth::GatewayAuth,
+    db::ChannelHealthEventInput,
     error::{AppError, AppResult},
     models::{GatewayContext, GatewayReservation, LedgerEvent, ProviderKind, Usage},
     pricing::{fire_sale_discount, select_price, settle},
@@ -255,11 +256,26 @@ async fn handle_gateway(
             Err(err) => return Err(err),
         };
 
+        let attempt_started = Instant::now();
         let upstream = match send_upstream(&state, &decision, client_protocol, &raw_body, &request)
             .await
         {
             Ok(response) => response,
             Err(err) => {
+                let error = err.to_string();
+                record_channel_health(
+                    &state,
+                    &decision,
+                    GatewayHealthEvent {
+                        request_id: &request_id,
+                        status: "down",
+                        http_status: None,
+                        ttft_ms: None,
+                        total_latency_ms: Some(elapsed_ms(attempt_started)),
+                        error: Some(error.as_str()),
+                    },
+                )
+                .await;
                 state.db.release_gateway_reservation(&reservation).await?;
                 state
                     .router_state
@@ -281,6 +297,25 @@ async fn handle_gateway(
                 .mark_cooldown(decision.channel.id, retry_cooldown)
                 .await;
             if can_retry_after_failure(&decision) && has_retry_left(attempt_index, max_attempts) {
+                let health_status = if status == StatusCode::TOO_MANY_REQUESTS {
+                    "degraded"
+                } else {
+                    "down"
+                };
+                let error = format!("HTTP {status}");
+                record_channel_health(
+                    &state,
+                    &decision,
+                    GatewayHealthEvent {
+                        request_id: &request_id,
+                        status: health_status,
+                        http_status: Some(status.as_u16() as i64),
+                        ttft_ms: None,
+                        total_latency_ms: Some(elapsed_ms(attempt_started)),
+                        error: Some(error.as_str()),
+                    },
+                )
+                .await;
                 state.db.release_gateway_reservation(&reservation).await?;
                 last_retry_error = Some(AppError::Upstream(format!(
                     "upstream channel {} returned {status}",
@@ -299,6 +334,7 @@ async fn handle_gateway(
             request_id: request_id.clone(),
             price: price.clone(),
             reservation: reservation.clone(),
+            attempt_started,
         };
         match finish_response(finish, upstream).await? {
             FinishOutcome::Response(response) => return Ok(response),
@@ -370,6 +406,38 @@ fn stream_chunk_has_done_marker(bytes: &Bytes) -> bool {
     text.lines()
         .filter_map(|line| line.strip_prefix("data:"))
         .any(|data| data.trim() == "[DONE]")
+}
+
+fn elapsed_ms(started: Instant) -> i64 {
+    started.elapsed().as_millis().min(i64::MAX as u128) as i64
+}
+
+async fn record_channel_health(
+    state: &AppState,
+    decision: &RouteDecision,
+    event: GatewayHealthEvent<'_>,
+) {
+    let _ = state
+        .db
+        .record_channel_health_event(ChannelHealthEventInput {
+            channel_id: decision.channel.id,
+            request_id: Some(event.request_id),
+            status: event.status,
+            http_status: event.http_status,
+            ttft_ms: event.ttft_ms,
+            total_latency_ms: event.total_latency_ms,
+            error: event.error,
+        })
+        .await;
+}
+
+struct GatewayHealthEvent<'a> {
+    request_id: &'a str,
+    status: &'a str,
+    http_status: Option<i64>,
+    ttft_ms: Option<i64>,
+    total_latency_ms: Option<i64>,
+    error: Option<&'a str>,
 }
 
 async fn retryable_empty_finish(finish: &FinishContext, err: AppError) -> AppResult<FinishOutcome> {
@@ -572,6 +640,7 @@ struct FinishContext {
     request_id: String,
     price: crate::models::ModelPrice,
     reservation: GatewayReservation,
+    attempt_started: Instant,
 }
 
 enum FinishOutcome {
@@ -601,6 +670,24 @@ async fn finish_response(
 
     let provider_protocol = provider_protocol(&finish.decision.channel.provider);
     if !status.is_success() {
+        let error = format!("HTTP {status}");
+        record_channel_health(
+            &finish.state,
+            &finish.decision,
+            GatewayHealthEvent {
+                request_id: &finish.request_id,
+                status: if status == StatusCode::TOO_MANY_REQUESTS {
+                    "degraded"
+                } else {
+                    "down"
+                },
+                http_status: Some(status.as_u16() as i64),
+                ttft_ms: None,
+                total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                error: Some(error.as_str()),
+            },
+        )
+        .await;
         finish
             .state
             .db
@@ -611,6 +698,20 @@ async fn finish_response(
         Ok(value) => value,
         Err(err) => {
             if status.is_success() {
+                let error = err.to_string();
+                record_channel_health(
+                    &finish.state,
+                    &finish.decision,
+                    GatewayHealthEvent {
+                        request_id: &finish.request_id,
+                        status: "down",
+                        http_status: Some(status.as_u16() as i64),
+                        ttft_ms: None,
+                        total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                        error: Some(error.as_str()),
+                    },
+                )
+                .await;
                 finish
                     .state
                     .db
@@ -626,10 +727,38 @@ async fn finish_response(
         ));
     }
     if !response_has_semantic_content(&value, provider_protocol) {
+        record_channel_health(
+            &finish.state,
+            &finish.decision,
+            GatewayHealthEvent {
+                request_id: &finish.request_id,
+                status: "empty",
+                http_status: Some(status.as_u16() as i64),
+                ttft_ms: None,
+                total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                error: Some("semantic empty response"),
+            },
+        )
+        .await;
         return retryable_empty_finish(&finish, empty_response_error(finish.decision.channel.id))
             .await;
     }
     let (body, usage) = client_response_body(finish.client_protocol, provider_protocol, value);
+    if status.is_success() {
+        record_channel_health(
+            &finish.state,
+            &finish.decision,
+            GatewayHealthEvent {
+                request_id: &finish.request_id,
+                status: "available",
+                http_status: Some(status.as_u16() as i64),
+                ttft_ms: Some(elapsed_ms(finish.attempt_started)),
+                total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                error: None,
+            },
+        )
+        .await;
+    }
     settle_success(&finish, usage).await?;
     Ok(FinishOutcome::Response(
         (status, Json(body)).into_response(),
@@ -681,6 +810,24 @@ async fn finish_streaming_response(
     let status = upstream.status();
     let provider_protocol = provider_protocol(&finish.decision.channel.provider);
     if !status.is_success() {
+        let error = format!("HTTP {status}");
+        record_channel_health(
+            &finish.state,
+            &finish.decision,
+            GatewayHealthEvent {
+                request_id: &finish.request_id,
+                status: if status == StatusCode::TOO_MANY_REQUESTS {
+                    "degraded"
+                } else {
+                    "down"
+                },
+                http_status: Some(status.as_u16() as i64),
+                ttft_ms: None,
+                total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                error: Some(error.as_str()),
+            },
+        )
+        .await;
         finish
             .state
             .db
@@ -708,6 +855,20 @@ async fn finish_streaming_response(
                     }
                 }
                 Err(err) => {
+                    let error = err.to_string();
+                    record_channel_health(
+                        &finish.state,
+                        &finish.decision,
+                        GatewayHealthEvent {
+                            request_id: &finish.request_id,
+                            status: "down",
+                            http_status: None,
+                            ttft_ms: None,
+                            total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                            error: Some(error.as_str()),
+                        },
+                    )
+                    .await;
                     return retryable_empty_finish(
                         &finish,
                         stream_error_before_content(finish.decision.channel.id, err),
@@ -717,9 +878,37 @@ async fn finish_streaming_response(
             }
         }
         if !saw_semantic {
+            record_channel_health(
+                &finish.state,
+                &finish.decision,
+                GatewayHealthEvent {
+                    request_id: &finish.request_id,
+                    status: "empty",
+                    http_status: Some(status.as_u16() as i64),
+                    ttft_ms: None,
+                    total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                    error: Some("semantic empty stream"),
+                },
+            )
+            .await;
             return retryable_empty_finish(&finish, empty_stream_error(finish.decision.channel.id))
                 .await;
         }
+    }
+    if status.is_success() {
+        record_channel_health(
+            &finish.state,
+            &finish.decision,
+            GatewayHealthEvent {
+                request_id: &finish.request_id,
+                status: "available",
+                http_status: Some(status.as_u16() as i64),
+                ttft_ms: Some(elapsed_ms(finish.attempt_started)),
+                total_latency_ms: Some(elapsed_ms(finish.attempt_started)),
+                error: None,
+            },
+        )
+        .await;
     }
     let finish_for_stream = finish.clone();
 
@@ -766,7 +955,10 @@ async fn finish_streaming_response(
                 },
                 final_usage,
                 "success",
-            ).await.is_err() {
+            )
+            .await
+            .is_err()
+            {
                 let _ = finish_for_stream
                     .state
                     .db

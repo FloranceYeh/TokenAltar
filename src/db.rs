@@ -14,11 +14,16 @@ use crate::{
     auth::{generate_token, hash_password, hash_token},
     error::{AppError, AppResult},
     models::{
-        AffinityRule, ApiKeyRecord, Channel, ChannelLimits, ChannelQuotaWindow, GatewayReservation,
-        LedgerEvent, ModelPrice, PublicChannel, User, json_array_to_strings,
+        AffinityRule, ApiKeyRecord, Channel, ChannelHealthWindow, ChannelLimits,
+        ChannelQuotaWindow, GatewayReservation, LedgerEvent, ModelPrice, PublicChannel, User,
+        json_array_to_strings,
     },
     settings::{RuntimeSettings, SETTING_DEFAULTS, validate_setting_value},
 };
+
+const CHANNEL_HEALTH_WINDOW_SECONDS: i64 = 30 * 60;
+const CHANNEL_HEALTH_WINDOW_COUNT: usize = 48;
+const CHANNEL_HEALTH_RETENTION_DAYS: i64 = 7;
 
 const MANAGED_USER_SELECT: &str = r#"
     SELECT u.id, u.email, u.role, u.display_name, u.points_balance,
@@ -45,6 +50,17 @@ const MANAGED_USER_SELECT_BY_ID: &str = r#"
 #[derive(Clone)]
 pub struct Database {
     pub pool: SqlitePool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelHealthEventInput<'a> {
+    pub channel_id: i64,
+    pub request_id: Option<&'a str>,
+    pub status: &'a str,
+    pub http_status: Option<i64>,
+    pub ttft_ms: Option<i64>,
+    pub total_latency_ms: Option<i64>,
+    pub error: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -870,6 +886,64 @@ impl Database {
         Ok(windows)
     }
 
+    async fn attach_channel_health_windows(&self, channels: &mut [PublicChannel]) -> AppResult<()> {
+        let now = Utc::now();
+        let channel_ids = channels
+            .iter()
+            .map(|channel| channel.id)
+            .collect::<Vec<_>>();
+        let mut windows_by_channel = channel_ids
+            .iter()
+            .map(|id| (*id, empty_channel_health_windows(now)))
+            .collect::<HashMap<_, _>>();
+        if channel_ids.is_empty() {
+            return Ok(());
+        }
+
+        let retention = format!(
+            "-{} seconds",
+            CHANNEL_HEALTH_WINDOW_SECONDS * CHANNEL_HEALTH_WINDOW_COUNT as i64
+        );
+        let rows = sqlx::query(
+            r#"
+            SELECT channel_id, status, ttft_ms, created_at
+            FROM channel_health_events
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY channel_id, created_at
+            "#,
+        )
+        .bind(retention)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            let channel_id = row.get::<i64, _>("channel_id");
+            let Some(windows) = windows_by_channel.get_mut(&channel_id) else {
+                continue;
+            };
+            let created_at = row.get::<String, _>("created_at");
+            let Some(created_at) = parse_sqlite_utc_datetime_opt(&created_at) else {
+                continue;
+            };
+            let Some(bucket) = windows
+                .iter_mut()
+                .find(|bucket| created_at >= bucket.start_at && created_at < bucket.end_at)
+            else {
+                continue;
+            };
+            bucket.record(row.get::<String, _>("status"), row.get("ttft_ms"));
+        }
+        for channel in channels {
+            let windows = windows_by_channel
+                .remove(&channel.id)
+                .unwrap_or_else(|| empty_channel_health_windows(now));
+            channel.health_windows = windows
+                .into_iter()
+                .map(ChannelHealthAccumulator::finish)
+                .collect();
+        }
+        Ok(())
+    }
+
     pub async fn list_public_channels(&self, user: &User) -> AppResult<Vec<PublicChannel>> {
         let rows = if user.role == "admin" {
             sqlx::query(
@@ -900,10 +974,13 @@ impl Database {
             .await?
         };
         let windows = self.windows_by_channel().await?;
-        rows.iter()
+        let mut channels = rows
+            .iter()
             .map(|row| channel_from_row(row, &windows))
             .map(|result| result.map(PublicChannel::from))
-            .collect()
+            .collect::<AppResult<Vec<_>>>()?;
+        self.attach_channel_health_windows(&mut channels).await?;
+        Ok(channels)
     }
 
     pub async fn upsert_channel(
@@ -1169,6 +1246,32 @@ impl Database {
         latency_ms: i64,
         last_error: Option<&str>,
     ) -> AppResult<()> {
+        self.record_channel_health_event(ChannelHealthEventInput {
+            channel_id,
+            request_id: None,
+            status: if last_error.is_some() {
+                "degraded"
+            } else {
+                "available"
+            },
+            http_status: None,
+            ttft_ms: if last_error.is_some() {
+                None
+            } else {
+                Some(latency_ms)
+            },
+            total_latency_ms: Some(latency_ms),
+            error: last_error,
+        })
+        .await
+    }
+
+    pub async fn record_channel_health_event(
+        &self,
+        event: ChannelHealthEventInput<'_>,
+    ) -> AppResult<()> {
+        validate_channel_health_status(event.status)?;
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query(
             r#"
             UPDATE channels
@@ -1177,16 +1280,46 @@ impl Database {
             WHERE id = ? AND deleted_at IS NULL
             "#,
         )
-        .bind(latency_ms)
-        .bind(last_error)
-        .bind(channel_id)
-        .execute(&self.pool)
+        .bind(event.ttft_ms.or(event.total_latency_ms))
+        .bind(if event.status == "available" {
+            None
+        } else {
+            event.error
+        })
+        .bind(event.channel_id)
+        .execute(&mut *tx)
         .await?;
         if result.rows_affected() == 0 {
-            Err(AppError::NotFound)
-        } else {
-            Ok(())
+            return Err(AppError::NotFound);
         }
+        sqlx::query(
+            r#"
+            INSERT INTO channel_health_events(
+              channel_id, request_id, status, http_status, ttft_ms, total_latency_ms, error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(event.channel_id)
+        .bind(event.request_id)
+        .bind(event.status)
+        .bind(event.http_status)
+        .bind(event.ttft_ms)
+        .bind(event.total_latency_ms)
+        .bind(event.error)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            r#"
+            DELETE FROM channel_health_events
+            WHERE channel_id = ? AND created_at < datetime('now', ?)
+            "#,
+        )
+        .bind(event.channel_id)
+        .bind(format!("-{CHANNEL_HEALTH_RETENTION_DAYS} days"))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn list_prices(&self, user: &User) -> AppResult<Vec<ModelPrice>> {
@@ -2088,6 +2221,107 @@ fn channel_from_row(
     })
 }
 
+struct ChannelHealthAccumulator {
+    start_at: DateTime<Utc>,
+    end_at: DateTime<Utc>,
+    sample_count: i64,
+    success_count: i64,
+    empty_count: i64,
+    degraded_count: i64,
+    down_count: i64,
+    ttft_sum_ms: i64,
+    ttft_count: i64,
+}
+
+impl ChannelHealthAccumulator {
+    fn record(&mut self, status: String, ttft_ms: Option<i64>) {
+        self.sample_count += 1;
+        match status.as_str() {
+            "available" => {
+                self.success_count += 1;
+                if let Some(ttft_ms) = ttft_ms {
+                    self.ttft_sum_ms += ttft_ms;
+                    self.ttft_count += 1;
+                }
+            }
+            "empty" => self.empty_count += 1,
+            "degraded" => self.degraded_count += 1,
+            "down" => self.down_count += 1,
+            _ => self.degraded_count += 1,
+        }
+    }
+
+    fn finish(self) -> ChannelHealthWindow {
+        let status = if self.sample_count == 0 {
+            "unknown"
+        } else if self.down_count > 0 {
+            "down"
+        } else if self.empty_count > 0 {
+            "empty"
+        } else if self.degraded_count > 0 {
+            "degraded"
+        } else {
+            "available"
+        };
+        ChannelHealthWindow {
+            window_start_at: self.start_at.to_rfc3339(),
+            window_end_at: self.end_at.to_rfc3339(),
+            status: status.to_string(),
+            sample_count: self.sample_count,
+            success_count: self.success_count,
+            empty_count: self.empty_count,
+            degraded_count: self.degraded_count,
+            down_count: self.down_count,
+            avg_ttft_ms: if self.ttft_count > 0 {
+                Some((self.ttft_sum_ms as f64 / self.ttft_count as f64).round() as i64)
+            } else {
+                None
+            },
+        }
+    }
+}
+
+fn empty_channel_health_windows(now: DateTime<Utc>) -> Vec<ChannelHealthAccumulator> {
+    let end_epoch =
+        ((now.timestamp() / CHANNEL_HEALTH_WINDOW_SECONDS) + 1) * CHANNEL_HEALTH_WINDOW_SECONDS;
+    let first_start =
+        end_epoch - CHANNEL_HEALTH_WINDOW_SECONDS * CHANNEL_HEALTH_WINDOW_COUNT as i64;
+    (0..CHANNEL_HEALTH_WINDOW_COUNT)
+        .map(|index| {
+            let start_epoch = first_start + index as i64 * CHANNEL_HEALTH_WINDOW_SECONDS;
+            let end_epoch = start_epoch + CHANNEL_HEALTH_WINDOW_SECONDS;
+            ChannelHealthAccumulator {
+                start_at: Utc
+                    .timestamp_opt(start_epoch, 0)
+                    .single()
+                    .expect("health window start timestamp is valid"),
+                end_at: Utc
+                    .timestamp_opt(end_epoch, 0)
+                    .single()
+                    .expect("health window end timestamp is valid"),
+                sample_count: 0,
+                success_count: 0,
+                empty_count: 0,
+                degraded_count: 0,
+                down_count: 0,
+                ttft_sum_ms: 0,
+                ttft_count: 0,
+            }
+        })
+        .collect()
+}
+
+fn parse_sqlite_utc_datetime_opt(value: &str) -> Option<DateTime<Utc>> {
+    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|naive| Utc.from_utc_datetime(&naive))
+        .or_else(|| {
+            DateTime::parse_from_rfc3339(value)
+                .ok()
+                .map(|datetime| datetime.with_timezone(&Utc))
+        })
+}
+
 fn affinity_rule_from_row(row: &sqlx::sqlite::SqliteRow) -> AffinityRule {
     AffinityRule {
         id: row.get("id"),
@@ -2360,6 +2594,15 @@ fn validate_quota_windows(windows: &[ChannelQuotaWindowInput]) -> AppResult<()> 
         let _ = compute_window_bounds(&definition, Utc::now())?;
     }
     Ok(())
+}
+
+fn validate_channel_health_status(status: &str) -> AppResult<()> {
+    match status {
+        "available" | "empty" | "degraded" | "down" => Ok(()),
+        other => Err(AppError::BadRequest(format!(
+            "unsupported channel health status: {other}"
+        ))),
+    }
 }
 
 struct QuotaWindowDefinition {

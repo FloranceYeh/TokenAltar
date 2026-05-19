@@ -88,6 +88,7 @@ pub struct PublicChannel {
     pub upstream_latency_ms: Option<i64>,
     pub last_error: Option<String>,
     pub limits: ChannelLimits,
+    pub health_windows: Vec<ChannelHealthWindow>,
 }
 
 impl From<Channel> for PublicChannel {
@@ -105,8 +106,22 @@ impl From<Channel> for PublicChannel {
             upstream_latency_ms: channel.upstream_latency_ms,
             last_error: channel.last_error,
             limits: channel.limits,
+            health_windows: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelHealthWindow {
+    pub window_start_at: String,
+    pub window_end_at: String,
+    pub status: String,
+    pub sample_count: i64,
+    pub success_count: i64,
+    pub empty_count: i64,
+    pub degraded_count: i64,
+    pub down_count: i64,
+    pub avg_ttft_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
