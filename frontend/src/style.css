@@ -562,7 +562,7 @@ caption {
 
 .hero-kicker span,
 .page-header span {
-  color: var(--gold-bright);
+  color: var(--bronze);
   font-size: 0.78rem;
   font-weight: 900;
   text-transform: uppercase;
