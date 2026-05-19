@@ -107,3 +107,9 @@
 - **Status:** Completed
 - **Next Steps:** Add action-level error toasts and confirmations for destructive channel/key operations.
 - **Context:** Backend permissions are unchanged; this is a UI clarity pass over existing role boundaries.
+
+## [2026-05-19 12:47] Gateway Failure Retry
+- **Changes:** Reworked gateway upstream dispatch into a bounded retry loop for connection errors, 408, 429, and 5xx responses; failed attempts now release reservations, apply a short channel cooldown, retry another healthy channel when affinity fallback is allowed, and update affinity bindings on successful fallback.
+- **Status:** Completed
+- **Next Steps:** Tune retry/cooldown knobs from production traffic if upstream providers need different backoff behavior.
+- **Context:** `skip_retry_on_failure=true` still pins bound affinity traffic to the bound channel and returns its error; streaming requests retry only before a successful upstream stream begins.

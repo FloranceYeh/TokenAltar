@@ -28,6 +28,9 @@ use crate::{
     routing::{RouteDecision, choose_channel},
 };
 
+const MAX_GATEWAY_ATTEMPTS: usize = 8;
+const RETRY_COOLDOWN: Duration = Duration::from_secs(30);
+
 pub async fn openai_chat_completions(
     State(state): State<AppState>,
     GatewayAuth(auth): GatewayAuth,
@@ -160,6 +163,8 @@ async fn handle_gateway(
     raw_body: Value,
     endpoint: GatewayEndpoint,
 ) -> AppResult<Response> {
+    let client_protocol = endpoint.client_protocol;
+    let request_path = endpoint.request_path;
     let mut parse_body = raw_body.clone();
     if let Some(model) = endpoint.path_model {
         parse_body["_model"] = Value::String(model);
@@ -167,7 +172,7 @@ async fn handle_gateway(
     if let Some(stream) = endpoint.path_stream {
         parse_body["_stream"] = Value::Bool(stream);
     }
-    let request = parse_client_request(endpoint.client_protocol, &parse_body)?;
+    let request = parse_client_request(client_protocol, &parse_body)?;
     let api_key = auth.api_key.clone().ok_or(AppError::Unauthorized)?;
     ensure_api_key_model_allowed(&api_key, &request.model)?;
     state.db.refresh_channel_windows().await?;
@@ -177,133 +182,154 @@ async fn handle_gateway(
     let reserve = token_estimate.tokens as f64 * reserve_price.input_price_per_1k / 1000.0;
     ensure_affordable(&auth.user, &api_key, reserve)?;
 
-    let channels = state.db.list_route_channels().await?;
     let gateway_context = GatewayContext::default();
     let affinity_hit = lookup_affinity(
         &state.db,
         &state.affinity_cache,
-        endpoint.request_path,
+        request_path,
         &headers,
         &raw_body,
         &request,
         &gateway_context,
     )
     .await?;
-    let decision =
-        choose_channel(&channels, &request.model, affinity_hit, &state.router_state).await?;
-    let price = select_price(
-        &request.model,
-        &state.db.price_book_for_channel(decision.channel.id).await?,
-    );
-    let selected_reserve = token_estimate.tokens as f64 * price.input_price_per_1k / 1000.0;
-    ensure_affordable(&auth.user, &api_key, selected_reserve)?;
-    let reservation = state
-        .db
-        .reserve_gateway_request(
-            auth.user.id,
-            api_key.id,
-            decision.channel.id,
-            token_estimate.tokens,
-            selected_reserve,
-        )
-        .await?;
 
     let request_id = Uuid::new_v7(uuid::Timestamp::now(uuid::NoContext)).to_string();
-    let upstream = match send_upstream(
-        &state,
-        &decision,
-        endpoint.client_protocol,
-        &raw_body,
-        &request,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(err) => {
-            state.db.release_gateway_reservation(&reservation).await?;
-            return Err(err);
-        }
-    };
+    let route_count = state.db.list_route_channels().await?.len();
+    let max_attempts = route_count.clamp(1, MAX_GATEWAY_ATTEMPTS);
+    let mut last_retry_error: Option<AppError> = None;
 
-    if upstream.status() == StatusCode::TOO_MANY_REQUESTS {
-        state.db.release_gateway_reservation(&reservation).await?;
-        state
-            .router_state
-            .mark_cooldown(decision.channel.id, Duration::from_secs(30))
-            .await;
-        let retry = choose_channel(
+    for attempt_index in 0..max_attempts {
+        state.db.refresh_channel_windows().await?;
+        let channels = state.db.list_route_channels().await?;
+        let decision = match choose_channel(
             &channels,
             &request.model,
-            decision.affinity_hit.clone(),
+            affinity_hit.clone(),
             &state.router_state,
         )
-        .await?;
-        let retry_price = select_price(
+        .await
+        {
+            Ok(decision) => decision,
+            Err(err) => {
+                if let Some(last_retry_error) = last_retry_error {
+                    return Err(last_retry_error);
+                }
+                return Err(err);
+            }
+        };
+        let price = select_price(
             &request.model,
-            &state.db.price_book_for_channel(retry.channel.id).await?,
+            &state.db.price_book_for_channel(decision.channel.id).await?,
         );
-        let retry_reserve = token_estimate.tokens as f64 * retry_price.input_price_per_1k / 1000.0;
-        ensure_affordable(&auth.user, &api_key, retry_reserve)?;
-        let retry_reservation = state
+        let selected_reserve = token_estimate.tokens as f64 * price.input_price_per_1k / 1000.0;
+        ensure_affordable(&auth.user, &api_key, selected_reserve)?;
+        let reservation = match state
             .db
             .reserve_gateway_request(
                 auth.user.id,
                 api_key.id,
-                retry.channel.id,
+                decision.channel.id,
                 token_estimate.tokens,
-                retry_reserve,
+                selected_reserve,
             )
-            .await?;
-        let retry_response = match send_upstream(
-            &state,
-            &retry,
-            endpoint.client_protocol,
-            &raw_body,
-            &request,
-        )
-        .await
+            .await
+        {
+            Ok(reservation) => reservation,
+            Err(err)
+                if is_retryable_reservation_error(&err)
+                    && can_retry_after_failure(&decision)
+                    && has_retry_left(attempt_index, max_attempts) =>
+            {
+                state
+                    .router_state
+                    .mark_cooldown(decision.channel.id, RETRY_COOLDOWN)
+                    .await;
+                last_retry_error = Some(err);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+
+        let upstream = match send_upstream(&state, &decision, client_protocol, &raw_body, &request)
+            .await
         {
             Ok(response) => response,
             Err(err) => {
+                state.db.release_gateway_reservation(&reservation).await?;
                 state
-                    .db
-                    .release_gateway_reservation(&retry_reservation)
-                    .await?;
+                    .router_state
+                    .mark_cooldown(decision.channel.id, RETRY_COOLDOWN)
+                    .await;
+                if can_retry_after_failure(&decision) && has_retry_left(attempt_index, max_attempts)
+                {
+                    last_retry_error = Some(err);
+                    continue;
+                }
                 return Err(err);
             }
         };
+
+        let status = upstream.status();
+        if is_retryable_upstream_status(status) {
+            state
+                .router_state
+                .mark_cooldown(decision.channel.id, RETRY_COOLDOWN)
+                .await;
+            if can_retry_after_failure(&decision) && has_retry_left(attempt_index, max_attempts) {
+                state.db.release_gateway_reservation(&reservation).await?;
+                last_retry_error = Some(AppError::Upstream(format!(
+                    "upstream channel {} returned {status}",
+                    decision.channel.id
+                )));
+                continue;
+            }
+        }
         return finish_response(
             FinishContext {
                 state,
                 auth,
                 api_key,
-                decision: retry,
+                decision,
                 request,
-                client_protocol: endpoint.client_protocol,
+                client_protocol,
                 request_id,
-                price: retry_price,
-                reservation: retry_reservation,
+                price,
+                reservation,
             },
-            retry_response,
+            upstream,
         )
         .await;
     }
 
-    finish_response(
-        FinishContext {
-            state,
-            auth,
-            api_key,
-            decision,
-            request,
-            client_protocol: endpoint.client_protocol,
-            request_id,
-            price,
-            reservation,
-        },
-        upstream,
+    Err(last_retry_error.unwrap_or_else(|| {
+        AppError::BadRequest("no healthy channel for requested model".to_string())
+    }))
+}
+
+fn has_retry_left(attempt_index: usize, max_attempts: usize) -> bool {
+    attempt_index + 1 < max_attempts
+}
+
+fn can_retry_after_failure(decision: &RouteDecision) -> bool {
+    !matches!(
+        &decision.affinity_hit,
+        Some(hit) if hit.rule.skip_retry_on_failure && hit.channel_id == Some(decision.channel.id)
     )
-    .await
+}
+
+fn is_retryable_upstream_status(status: StatusCode) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+fn is_retryable_reservation_error(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::BadRequest(message)
+            if message == "channel token quota no longer has enough room for the estimate"
+    )
 }
 
 fn ensure_api_key_model_allowed(

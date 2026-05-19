@@ -41,6 +41,9 @@ Console sessions use `Authorization: Bearer ta-...`.
 
 Text protocol conversion supports text messages, image inputs, `system`, `temperature`, max token controls, and basic tool/function fields across OpenAI, Anthropic, and Gemini.
 Files, embeddings, rerank, realtime, audio, and other non-text extensions are intentionally outside the current gateway surface.
+Before any upstream bytes are sent to the client, retryable upstream failures (`408`, `429`, and `5xx`) and connection errors release the local reservation, put that channel into a short local cooldown, and transparently retry another healthy channel when the matching affinity rule permits fallback.
+When `switch_on_success` is enabled, a successful fallback rewrites the affinity binding to the recovered channel; `skip_retry_on_failure` keeps a bound request pinned and returns the bound channel error instead.
+Streaming requests follow the same pre-stream retry rule, but once a successful upstream stream has begun the gateway does not interrupt or replay it.
 
 ## Management Controls
 

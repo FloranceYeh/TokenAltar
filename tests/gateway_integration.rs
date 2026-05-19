@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use tokenaltar::{
     app::{AppState, build_router},
     config::Config,
-    db::{ChannelInput, ChannelQuotaWindowInput},
+    db::{AffinityRuleInput, ChannelInput, ChannelQuotaWindowInput},
     models::ModelPrice,
 };
 use tower::ServiceExt;
@@ -151,9 +151,9 @@ async fn exhausted_channel_is_marked_unavailable() {
     .await;
     let (state, token) = setup_state(upstream).await;
     sqlx::query("UPDATE channel_quota_windows SET used_tokens = limit_tokens WHERE channel_id = 1")
-    .execute(&state.db.pool)
-    .await
-    .unwrap();
+        .execute(&state.db.pool)
+        .await
+        .unwrap();
     state.db.refresh_channel_windows().await.unwrap();
     let app = build_router(state, &test_config("unused"));
     let response = app
@@ -444,6 +444,130 @@ async fn gemini_to_gemini_image_passthrough_keeps_file_data() {
     );
 }
 
+#[tokio::test]
+async fn affinity_429_retries_backup_channel_and_switches_binding() {
+    let failing = spawn_status_upstream(StatusCode::TOO_MANY_REQUESTS).await;
+    let backup = spawn_upstream(json!({
+        "id": "resp_retry",
+        "model": "gpt-test",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "retry ok"}]}],
+        "usage": {"input_tokens": 12, "output_tokens": 4}
+    }))
+    .await;
+    let (state, token) = setup_state(failing).await;
+    let first_channel_id = 1;
+    let backup_channel_id = add_test_channel(&state, backup, "openai").await;
+    let cache_key = bind_tenant_affinity(&state, first_channel_id, false).await;
+    let app = build_router(state.clone(), &test_config("unused"));
+
+    let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let ledger = state.db.list_ledger(None).await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0]["channel_id"], backup_channel_id);
+    assert_eq!(
+        state
+            .db
+            .get_channel(first_channel_id)
+            .await
+            .unwrap()
+            .limits
+            .windows[0]
+            .used_tokens,
+        0
+    );
+    assert_eq!(
+        state
+            .db
+            .get_channel(backup_channel_id)
+            .await
+            .unwrap()
+            .limits
+            .windows[0]
+            .used_tokens,
+        16
+    );
+    let (binding_channel_id, _) = state
+        .db
+        .get_affinity_binding(&cache_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding_channel_id, backup_channel_id);
+}
+
+#[tokio::test]
+async fn affinity_5xx_retries_backup_channel_before_returning_to_client() {
+    let failing = spawn_status_upstream(StatusCode::BAD_GATEWAY).await;
+    let backup = spawn_upstream(json!({
+        "id": "resp_retry_5xx",
+        "model": "gpt-test",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "retry ok"}]}],
+        "usage": {"input_tokens": 8, "output_tokens": 3}
+    }))
+    .await;
+    let (state, token) = setup_state(failing).await;
+    let backup_channel_id = add_test_channel(&state, backup, "openai").await;
+    bind_tenant_affinity(&state, 1, false).await;
+    let app = build_router(state.clone(), &test_config("unused"));
+
+    let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let ledger = state.db.list_ledger(None).await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0]["channel_id"], backup_channel_id);
+    assert_eq!(ledger[0]["input_tokens"], 8);
+    assert_eq!(ledger[0]["output_tokens"], 3);
+}
+
+#[tokio::test]
+async fn affinity_skip_retry_on_failure_returns_bound_channel_error() {
+    let failing = spawn_status_upstream(StatusCode::BAD_GATEWAY).await;
+    let backup = spawn_upstream(json!({
+        "id": "resp_should_not_retry",
+        "model": "gpt-test",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "unexpected"}]}],
+        "usage": {"input_tokens": 8, "output_tokens": 3}
+    }))
+    .await;
+    let (state, token) = setup_state(failing).await;
+    let backup_channel_id = add_test_channel(&state, backup, "openai").await;
+    let cache_key = bind_tenant_affinity(&state, 1, true).await;
+    let app = build_router(state.clone(), &test_config("unused"));
+
+    let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(state.db.list_ledger(None).await.unwrap().is_empty());
+    assert_eq!(
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
+        0
+    );
+    assert_eq!(
+        state
+            .db
+            .get_channel(backup_channel_id)
+            .await
+            .unwrap()
+            .limits
+            .windows[0]
+            .used_tokens,
+        0
+    );
+    let (binding_channel_id, _) = state
+        .db
+        .get_affinity_binding(&cache_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding_channel_id, 1);
+}
+
 async fn setup_state(upstream: String) -> (AppState, String) {
     setup_state_with_provider(upstream, "openai").await
 }
@@ -491,6 +615,76 @@ async fn setup_state_with_provider(upstream: String, provider: &str) -> (AppStat
     (state, token)
 }
 
+async fn add_test_channel(state: &AppState, upstream: String, provider: &str) -> i64 {
+    let owner_user_id = state.db.get_channel(1).await.unwrap().owner_user_id;
+    state
+        .db
+        .upsert_channel(
+            owner_user_id,
+            ChannelInput {
+                name: format!("backup-{provider}"),
+                provider: provider.to_string(),
+                base_url: upstream,
+                api_key_secret: "upstream-key".to_string(),
+                models: vec!["*".to_string()],
+                enabled: true,
+                windows: quota_windows(),
+                fire_sale_days_before: 3,
+                fire_sale_remaining_pct: 0.25,
+                fire_sale_discount: 0.2,
+                provider_share: 0.7,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+}
+
+async fn bind_tenant_affinity(state: &AppState, channel_id: i64, skip_retry: bool) -> String {
+    let rule = state
+        .db
+        .create_affinity_rule(AffinityRuleInput {
+            name: format!("tenant-stick-{channel_id}-{skip_retry}"),
+            enabled: true,
+            model_regex: None,
+            request_path: Some("/v1/responses".to_string()),
+            user_agent_regex: None,
+            key_source_type: "request_header".to_string(),
+            key_source_path: "x-tenant-id".to_string(),
+            group_name: "default".to_string(),
+            ttl_seconds: 3600,
+            skip_retry_on_failure: skip_retry,
+            switch_on_success: true,
+        })
+        .await
+        .unwrap();
+    let cache_key = format!("{}:gpt-test:{}:alpha", rule.name, rule.group_name);
+    state
+        .db
+        .set_affinity_binding(&cache_key, rule.id, channel_id, 3600)
+        .await
+        .unwrap();
+    cache_key
+}
+
+fn retry_request(token: &str, tenant: &str) -> axum::http::Request<axum::body::Body> {
+    axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/responses")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .header("x-tenant-id", tenant)
+        .body(axum::body::Body::from(
+            json!({
+                "model": "gpt-test",
+                "input": "hello",
+                "stream": false
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
 fn quota_windows() -> Vec<ChannelQuotaWindowInput> {
     vec![
         ChannelQuotaWindowInput {
@@ -536,6 +730,28 @@ async fn spawn_upstream(body: Value) -> String {
             }),
         )
         .route("/v1/messages", post(handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_status_upstream(status: StatusCode) -> String {
+    let app = Router::new().route(
+        "/v1/responses",
+        post(move || async move {
+            (
+                status,
+                Json(json!({
+                    "error": {
+                        "message": format!("temporary {status}")
+                    }
+                })),
+            )
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     tokio::spawn(async move {
