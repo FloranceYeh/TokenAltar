@@ -131,3 +131,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Login/register bindings and API calls are unchanged; verification used `pnpm --dir frontend build` plus Playwright desktop/mobile screenshots.
+
+## [2026-05-19 15:17] Login Email Prefill Removal
+- **Changes:** Cleared the logged-out hero login form's default email value so the username field starts empty.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Login autocomplete and API payload bindings are unchanged; this only removes the UI seed value.

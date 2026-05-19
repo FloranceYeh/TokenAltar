@@ -82,7 +82,7 @@ const channelTestResults = ref<Record<number, string>>({})
 const apiKeyFilter = ref('')
 const channelFilter = ref('')
 
-const loginForm = reactive({ email: 'admin@example.com', password: '' })
+const loginForm = reactive({ email: '', password: '' })
 const registerForm = reactive({ email: '', password: '', display_name: '', invite_code: '' })
 const apiKeyForm = reactive({
   name: 'local-dev',
