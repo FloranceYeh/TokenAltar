@@ -25,6 +25,7 @@ type TabId =
   | 'dashboard'
   | 'users'
   | 'keys'
+  | 'health'
   | 'channels'
   | 'prices'
   | 'affinity'
@@ -138,6 +139,7 @@ const editingChannelId = ref<number | null>(null)
 const channelTestResults = ref<Record<number, string>>({})
 const apiKeyFilter = ref('')
 const channelFilter = ref('')
+const healthFilter = ref('')
 const userFilter = ref('')
 
 const loginForm = reactive({ email: '', password: '' })
@@ -251,6 +253,11 @@ const tabDetails: Record<TabId, { eyebrow: string; title: string; description: s
     title: 'Channel inventory',
     description: 'Shape upstream pools with model coverage, quota windows, and fire-sale economics.',
   },
+  health: {
+    eyebrow: 'Pulse Arcade',
+    title: 'Channel health',
+    description: 'Passive request-derived health windows, TTFT, and provider status across upstream capacity.',
+  },
   prices: {
     eyebrow: 'Tariff Tablet',
     title: 'Pricing rules',
@@ -286,6 +293,7 @@ const tabs = computed<TabItem[]>(() => {
   const items: TabItem[] = [
     ['dashboard', 'Dashboard'],
     ['keys', 'API Keys'],
+    ['health', 'Health'],
     ['channels', 'Channels'],
     ['prices', 'Pricing'],
     ['economy', 'Economy'],
@@ -294,7 +302,7 @@ const tabs = computed<TabItem[]>(() => {
   ]
   if (isAdmin.value) {
     items.splice(1, 0, ['users', 'Users'])
-    items.splice(4, 0, ['affinity', 'Affinity'])
+    items.splice(5, 0, ['affinity', 'Affinity'])
     items.push(['settings', 'Settings'])
   }
   return items
@@ -306,6 +314,13 @@ const activeTabMeta = computed(() => {
       ...meta,
       title: 'My channels',
       description: 'Manage your own upstream capacity, quotas, pricing inputs, and health checks.',
+    }
+  }
+  if (!isAdmin.value && activeTab.value === 'health') {
+    return {
+      ...meta,
+      title: 'My channel health',
+      description: 'Passive request-derived health windows, TTFT, and provider status for your upstream pools.',
     }
   }
   if (!isAdmin.value && activeTab.value === 'prices') {
@@ -362,6 +377,27 @@ const filteredChannels = computed(() => {
     return haystack.includes(needle)
   })
 })
+const filteredHealthChannels = computed(() => {
+  const needle = healthFilter.value.trim().toLowerCase()
+  if (!needle) return channels.value
+  return channels.value.filter((channel) => {
+    const summary = healthSummary(channel)
+    const totals = healthTotals(channel)
+    const haystack = [
+      channel.name,
+      channel.provider,
+      channel.status,
+      channel.enabled ? 'enabled' : 'disabled',
+      channel.base_url,
+      isAdmin.value ? ownerLabel(channel) : '',
+      summary.label,
+      summary.detail,
+      totals.avgTtftMs === null ? 'ttft n/a' : `ttft ${fmt(totals.avgTtftMs, 0)}ms`,
+      ...(channel.models || []),
+    ].join(' ').toLowerCase()
+    return haystack.includes(needle)
+  })
+})
 const allFilteredApiKeysSelected = computed(() =>
   filteredApiKeys.value.length > 0 && filteredApiKeys.value.every((key) => selectedApiKeyIds.value.includes(key.id)),
 )
@@ -374,6 +410,41 @@ const dashboardMetrics = computed(() => [
   { label: 'Enabled channels', value: `${dashboard.value?.enabled_channels || 0} / ${dashboard.value?.channels || 0}`, detail: 'online capacity' },
   { label: 'Today spend', value: fmt(dashboard.value?.spent_points_today, 4), detail: 'points settled' },
 ])
+const healthMetrics = computed(() => {
+  const totals = channels.value.reduce((acc, channel) => {
+    const windows = healthWindows(channel)
+    const channelTotals = healthTotals(channel)
+    acc.samples += channelTotals.samples
+    acc.available += channelTotals.available
+    acc.empty += channelTotals.empty
+    acc.degraded += channelTotals.degraded
+    acc.down += channelTotals.down
+    acc.unknown += windows.filter((window) => window.sample_count === 0).length
+    if (channel.enabled && channel.status !== 'deleted') acc.enabled += 1
+    if (channelTotals.avgTtftMs !== null) {
+      acc.ttftNumerator += channelTotals.avgTtftMs * channelTotals.available
+      acc.ttftDenominator += channelTotals.available
+    }
+    return acc
+  }, {
+    samples: 0,
+    available: 0,
+    empty: 0,
+    degraded: 0,
+    down: 0,
+    unknown: 0,
+    enabled: 0,
+    ttftNumerator: 0,
+    ttftDenominator: 0,
+  })
+  const avgTtft = totals.ttftDenominator > 0 ? totals.ttftNumerator / totals.ttftDenominator : null
+  return [
+    { label: 'Channels', value: `${channels.value.length}`, detail: `${totals.enabled} enabled` },
+    { label: 'Samples', value: fmt(totals.samples, 0), detail: `${totals.available} available / ${totals.empty} empty` },
+    { label: 'Down windows', value: fmt(totals.down, 0), detail: `${totals.degraded} degraded / ${totals.unknown} gray` },
+    { label: 'Avg TTFT', value: avgTtft === null ? 'n/a' : `${fmt(avgTtft, 0)}ms`, detail: 'successful non-empty only' },
+  ]
+})
 const providerRows = computed(() => rankedRows(leaderboards.value.providers, 'tokens', 0))
 const consumerRows = computed(() => rankedRows(leaderboards.value.consumers, 'points', 4))
 const leaderboardSummary = computed(() => {
@@ -959,6 +1030,10 @@ function fmt(value: number | undefined, digits = 2) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: digits })
 }
 
+function formatTtft(value: number | null | undefined) {
+  return value === null || value === undefined ? 'n/a' : `${fmt(value, 0)}ms`
+}
+
 function totalScore(rows: LeaderboardRow[] = []) {
   return rows.reduce((sum, row) => sum + Number(row.score || 0), 0)
 }
@@ -1082,6 +1157,48 @@ function healthWindowTitle(window: ChannelHealthWindow) {
     `down: ${window.down_count}`,
     ttft,
   ].join(' · ')
+}
+
+function healthTotals(channel: any) {
+  const windows = healthWindows(channel)
+  let ttftNumerator = 0
+  let ttftDenominator = 0
+  const totals = windows.reduce((acc, window) => {
+    acc.samples += window.sample_count
+    acc.available += window.success_count
+    acc.empty += window.empty_count
+    acc.degraded += window.degraded_count
+    acc.down += window.down_count
+    if (window.avg_ttft_ms !== null && window.success_count > 0) {
+      ttftNumerator += window.avg_ttft_ms * window.success_count
+      ttftDenominator += window.success_count
+    }
+    return acc
+  }, {
+    samples: 0,
+    available: 0,
+    empty: 0,
+    degraded: 0,
+    down: 0,
+  })
+  return {
+    ...totals,
+    avgTtftMs: ttftDenominator > 0 ? ttftNumerator / ttftDenominator : null,
+  }
+}
+
+function healthCurrentWindow(channel: any) {
+  const windows = healthWindows(channel)
+  return windows[windows.length - 1] || null
+}
+
+function providerTone(provider: string) {
+  const normalized = String(provider || '').toLowerCase()
+  return {
+    openai: normalized === 'openai',
+    anthropic: normalized === 'anthropic',
+    gemini: normalized === 'gemini',
+  }
 }
 
 function primaryWindow(channel: any) {
@@ -1216,6 +1333,75 @@ onMounted(refreshAll)
             <code>POST /v1/chat/completions</code>
             <code>POST /v1/responses</code>
             <code>POST /v1/messages</code>
+          </div>
+        </section>
+
+        <section v-if="activeTab === 'health'" class="health-page">
+          <div class="health-hero-panel">
+            <div>
+              <span class="section-kicker">Passive monitor</span>
+              <h3>All channel windows</h3>
+              <p>Each upstream channel is grouped by provider with request-derived availability, empty replies, down samples, and TTFT windows.</p>
+            </div>
+            <div class="health-actions">
+              <input v-model="healthFilter" class="search-input" placeholder="Filter channels, providers, owners, models" />
+              <button class="ghost" @click="loadChannels">Refresh</button>
+            </div>
+          </div>
+
+          <div class="metric-grid health-metrics">
+            <article v-for="metric in healthMetrics" :key="metric.label">
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+              <em>{{ metric.detail }}</em>
+            </article>
+          </div>
+
+          <div class="health-board">
+            <article v-for="channel in filteredHealthChannels" :key="channel.id" class="channel-health-card" :class="{ disabled: !channel.enabled }">
+              <div class="channel-health-head">
+                <div class="channel-identity">
+                  <div class="channel-title-line">
+                    <h3>{{ channel.name }}</h3>
+                    <span class="provider-badge" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
+                  </div>
+                  <div class="channel-subtitle">
+                    <span v-if="isAdmin">{{ ownerLabel(channel) }}</span>
+                    <span>{{ channel.models.join(', ') || '*' }}</span>
+                  </div>
+                </div>
+                <span class="status" :class="statusClass(channel)">{{ channel.enabled ? channel.status : 'disabled' }}</span>
+              </div>
+
+              <div class="channel-health-current">
+                <div class="health-summary card-summary">
+                  <strong :class="`tone-${healthSummary(channel).tone}`">{{ healthSummary(channel).label }}</strong>
+                  <span>{{ healthSummary(channel).detail }}</span>
+                </div>
+                <div class="current-window-time">
+                  {{ healthCurrentWindow(channel)?.window_start_at || '-' }} -> {{ healthCurrentWindow(channel)?.window_end_at || '-' }}
+                </div>
+              </div>
+
+              <div class="health-strip large" :aria-label="`Channel health windows for ${channel.name}`">
+                <span
+                  v-for="window in healthWindows(channel)"
+                  :key="`${channel.id}:health-page:${window.window_start_at}`"
+                  class="health-window"
+                  :class="healthBarClass(window)"
+                  :title="healthWindowTitle(window)"
+                ></span>
+              </div>
+
+              <div class="health-stat-row">
+                <span><strong>{{ healthTotals(channel).samples }}</strong> samples</span>
+                <span><strong>{{ healthTotals(channel).available }}</strong> available</span>
+                <span><strong>{{ healthTotals(channel).empty }}</strong> empty</span>
+                <span><strong>{{ healthTotals(channel).down }}</strong> down</span>
+                <span><strong>{{ formatTtft(healthTotals(channel).avgTtftMs) }}</strong> avg TTFT</span>
+              </div>
+            </article>
+            <div v-if="filteredHealthChannels.length === 0" class="health-empty">No channels match the current filter.</div>
           </div>
         </section>
 

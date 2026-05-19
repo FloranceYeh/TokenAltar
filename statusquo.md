@@ -160,3 +160,9 @@
 - **Status:** Completed
 - **Next Steps:** Continue watching real traffic to tune window size or retention if the console needs a longer historical horizon.
 - **Context:** Health windows are fixed 30-minute UTC buckets over the most recent 24 hours. TTFT averages include successful non-empty events only; failed, degraded, and empty events affect status color/counts but not TTFT.
+
+## [2026-05-19 22:10] Dedicated Channel Health Page
+- **Changes:** Added a standalone Health console tab that displays all visible channels with provider badges, owner labels for admins, current passive status, 48 health windows, and 24-hour TTFT/sample summaries. Updated `README.md` to document the dedicated view.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** The page reuses `/api/channels` and the existing passive `health_windows` payload, so no new active probing or backend route was added.

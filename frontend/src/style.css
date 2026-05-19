@@ -944,6 +944,206 @@ caption {
   gap: 10px;
 }
 
+.health-page {
+  max-width: 1480px !important;
+}
+
+.health-hero-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.6fr);
+  gap: 18px;
+  align-items: end;
+  overflow: hidden;
+  margin-bottom: 16px;
+  border: 1px solid rgba(99, 70, 37, 0.18);
+  border-radius: 8px;
+  padding: 20px;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.74), rgba(255, 250, 239, 0.68) 52%, rgba(83, 99, 72, 0.16)),
+    var(--stone-bright);
+  box-shadow: 0 18px 38px rgba(56, 35, 16, 0.1);
+}
+
+.health-hero-panel h3 {
+  margin-top: 6px;
+  font-size: 1.55rem;
+}
+
+.health-hero-panel p {
+  max-width: 720px;
+  margin-top: 6px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.health-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.health-actions .search-input {
+  max-width: none;
+  margin-right: 0;
+}
+
+.health-metrics {
+  margin-bottom: 16px;
+}
+
+.health-board {
+  display: grid;
+  gap: 14px;
+}
+
+.channel-health-card {
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(255, 250, 239, 0.78)),
+    var(--stone-bright);
+  box-shadow: 0 16px 34px rgba(56, 35, 16, 0.1);
+}
+
+.channel-health-card.disabled {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(239, 231, 216, 0.7)),
+    #eee4d4;
+}
+
+.channel-health-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.channel-identity {
+  min-width: 0;
+}
+
+.channel-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.channel-title-line h3 {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  font-size: 1.2rem;
+  overflow-wrap: anywhere;
+}
+
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(103, 85, 65, 0.22);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: rgba(103, 85, 65, 0.08);
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.provider-badge.openai {
+  border-color: rgba(83, 99, 72, 0.28);
+  background: rgba(83, 99, 72, 0.12);
+  color: var(--olive);
+}
+
+.provider-badge.anthropic {
+  border-color: rgba(184, 131, 52, 0.3);
+  background: rgba(184, 131, 52, 0.13);
+  color: #80551e;
+}
+
+.provider-badge.gemini {
+  border-color: rgba(39, 77, 110, 0.28);
+  background: rgba(39, 77, 110, 0.1);
+  color: var(--lapis);
+}
+
+.channel-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 5px;
+  color: var(--ink-muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.channel-health-current {
+  display: grid;
+  grid-template-columns: minmax(0, 0.55fr) minmax(0, 0.45fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(99, 70, 37, 0.14);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 250, 239, 0.62);
+}
+
+.card-summary {
+  padding-bottom: 0;
+}
+
+.current-window-time {
+  min-width: 0;
+  color: var(--ink-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.health-strip.large {
+  height: 30px;
+  padding: 4px;
+}
+
+.health-stat-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.health-stat-row span {
+  min-width: 0;
+  border: 1px solid rgba(99, 70, 37, 0.13);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: rgba(255, 250, 239, 0.62);
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
+.health-stat-row strong {
+  display: block;
+  color: #2b1d12;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.health-empty {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 26px;
+  background: rgba(255, 250, 239, 0.72);
+  color: var(--ink-muted);
+  text-align: center;
+}
+
 .leaderboard-meta-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1608,7 +1808,8 @@ button.danger:hover:not(:disabled) {
 
   .metric-grid,
   .form-grid,
-  .leaderboard-meta-grid {
+  .leaderboard-meta-grid,
+  .health-stat-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1697,6 +1898,10 @@ button.danger:hover:not(:disabled) {
   .quota-window,
   .two-col,
   .table-pair,
+  .health-hero-panel,
+  .health-actions,
+  .channel-health-current,
+  .health-stat-row,
   .leaderboard-hero,
   .leaderboard-meta-grid,
   .leaderboard-grid {
@@ -1730,6 +1935,19 @@ button.danger:hover:not(:disabled) {
 
   .segmented.small {
     width: 100%;
+  }
+
+  .channel-health-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .channel-health-head .status {
+    width: max-content;
+  }
+
+  .current-window-time {
+    text-align: left;
   }
 
   .leaderboard-controls {

@@ -65,6 +65,7 @@ When editing an existing channel, an empty `api_key_secret` keeps the stored ups
 The console also exposes channel clone, health test, per-row enable/disable, batch enable/disable, and soft delete operations.
 Channel health is passive by default: real gateway attempts append health events for `available`, `empty`, `degraded`, and `down` outcomes while manual health tests remain an explicit operator action.
 The channel list returns 48 fixed 30-minute health windows; each window averages TTFT from successful non-empty events only, excludes failed or empty events from the TTFT average, and renders windows with no records as gray.
+The console has a dedicated Health page that shows all visible channels, labels each provider, and summarizes request-derived samples, empty replies, down windows, and TTFT alongside the 48-window strip.
 
 Runtime settings are managed from `/api/settings`, with the current typed view available at `/api/runtime-settings`.
 Admins can configure seed balances, pricing units and fallback prices, settlement rounding, surge thresholds and multipliers, routing retry/cooldown/weight knobs, ledger/cache capacities, and console defaults for new keys and channels.
