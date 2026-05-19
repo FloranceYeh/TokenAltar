@@ -1,6 +1,13 @@
 use std::{net::SocketAddr, time::Duration};
 
-use axum::{Json, Router, http::StatusCode, routing::post};
+use axum::{
+    Json, Router,
+    body::Body,
+    http::{StatusCode, header},
+    response::Response,
+    routing::post,
+};
+use bytes::Bytes;
 use serde_json::{Value, json};
 use tokenaltar::{
     app::{AppState, build_router},
@@ -622,6 +629,88 @@ async fn affinity_5xx_retries_backup_channel_before_returning_to_client() {
 }
 
 #[tokio::test]
+async fn semantic_empty_response_retries_backup_channel() {
+    let empty = spawn_upstream(json!({
+        "id": "resp_empty",
+        "model": "gpt-test",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "   \n\t"}]}],
+        "usage": {"input_tokens": 8, "output_tokens": 0}
+    }))
+    .await;
+    let backup = spawn_upstream(json!({
+        "id": "resp_non_empty_backup",
+        "model": "gpt-test",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "backup ok"}]}],
+        "usage": {"input_tokens": 8, "output_tokens": 3}
+    }))
+    .await;
+    let (state, token) = setup_state(empty).await;
+    let backup_channel_id = add_test_channel(&state, backup, "openai").await;
+    bind_tenant_affinity(&state, 1, false).await;
+    let app = build_router(state.clone());
+
+    let response = app.oneshot(retry_request(&token, "alpha")).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["output"][0]["content"][0]["text"], "backup ok");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let ledger = state.db.list_ledger(None).await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0]["channel_id"], backup_channel_id);
+    assert_eq!(
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
+        0
+    );
+}
+
+#[tokio::test]
+async fn semantic_empty_stream_retries_backup_before_client_done() {
+    let empty_stream = spawn_stream_upstream(&[
+        ": keepalive\n\n",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"   \"}\n\n",
+        "data: [DONE]\n\n",
+    ])
+    .await;
+    let backup_stream = spawn_stream_upstream(&[
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"backup stream ok\"}\n\n",
+        "data: {\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}\n\n",
+        "data: [DONE]\n\n",
+    ])
+    .await;
+    let (state, token) = setup_state(empty_stream).await;
+    let backup_channel_id = add_test_channel(&state, backup_stream, "openai").await;
+    bind_tenant_affinity(&state, 1, false).await;
+    let app = build_router(state.clone());
+
+    let response = app
+        .oneshot(stream_retry_request(&token, "alpha"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("backup stream ok"));
+    assert!(!text.contains("\"delta\":\"   \""));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let ledger = state.db.list_ledger(None).await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0]["channel_id"], backup_channel_id);
+    assert_eq!(ledger[0]["input_tokens"], 8);
+    assert_eq!(ledger[0]["output_tokens"], 4);
+    assert_eq!(
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
+        0
+    );
+}
+
+#[tokio::test]
 async fn affinity_skip_retry_on_failure_returns_bound_channel_error() {
     let failing = spawn_status_upstream(StatusCode::BAD_GATEWAY).await;
     let backup = spawn_upstream(json!({
@@ -782,6 +871,24 @@ fn retry_request(token: &str, tenant: &str) -> axum::http::Request<axum::body::B
         .unwrap()
 }
 
+fn stream_retry_request(token: &str, tenant: &str) -> axum::http::Request<axum::body::Body> {
+    axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/responses")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .header("x-tenant-id", tenant)
+        .body(axum::body::Body::from(
+            json!({
+                "model": "gpt-test",
+                "input": "hello",
+                "stream": true
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
 fn quota_windows() -> Vec<ChannelQuotaWindowInput> {
     vec![
         ChannelQuotaWindowInput {
@@ -846,6 +953,35 @@ async fn spawn_status_upstream(status: StatusCode) -> String {
                     }
                 })),
             )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_stream_upstream(chunks: &[&'static str]) -> String {
+    let chunks = chunks.to_vec();
+    let app = Router::new().route(
+        "/v1/responses",
+        post(move || {
+            let chunks = chunks.clone();
+            async move {
+                let stream = async_stream::stream! {
+                    for chunk in chunks {
+                        yield Ok::<_, std::convert::Infallible>(Bytes::from_static(chunk.as_bytes()));
+                    }
+                };
+                let mut response = Response::new(Body::from_stream(stream));
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    header::HeaderValue::from_static("text/event-stream"),
+                );
+                response
+            }
         }),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

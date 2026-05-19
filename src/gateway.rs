@@ -22,8 +22,8 @@ use crate::{
     pricing::{fire_sale_discount, select_price, settle},
     protocol::{
         ClientProtocol, ProviderProtocol, client_response_body, extract_usage,
-        parse_client_request, provider_protocol, same_wire_protocol, translate_stream_chunk,
-        upstream_body, upstream_path,
+        parse_client_request, provider_protocol, response_has_semantic_content, same_wire_protocol,
+        stream_chunk_has_semantic_content, translate_stream_chunk, upstream_body, upstream_path,
     },
     routing::{RouteDecision, choose_channel},
     settings::RuntimeSettings,
@@ -289,21 +289,32 @@ async fn handle_gateway(
                 continue;
             }
         }
-        return finish_response(
-            FinishContext {
-                state,
-                auth,
-                api_key,
-                decision,
-                request,
-                client_protocol,
-                request_id,
-                price,
-                reservation,
-            },
-            upstream,
-        )
-        .await;
+        let finish = FinishContext {
+            state: state.clone(),
+            auth: auth.clone(),
+            api_key: api_key.clone(),
+            decision: decision.clone(),
+            request: request.clone(),
+            client_protocol,
+            request_id: request_id.clone(),
+            price: price.clone(),
+            reservation: reservation.clone(),
+        };
+        match finish_response(finish, upstream).await? {
+            FinishOutcome::Response(response) => return Ok(response),
+            FinishOutcome::Retry(err) => {
+                state
+                    .router_state
+                    .mark_cooldown(decision.channel.id, retry_cooldown)
+                    .await;
+                if can_retry_after_failure(&decision) && has_retry_left(attempt_index, max_attempts)
+                {
+                    last_retry_error = Some(err);
+                    continue;
+                }
+                return Err(err);
+            }
+        }
     }
 
     Err(last_retry_error.unwrap_or_else(|| {
@@ -334,6 +345,40 @@ fn is_retryable_reservation_error(err: &AppError) -> bool {
         AppError::BadRequest(message)
             if message == "channel token quota no longer has enough room for the estimate"
     )
+}
+
+fn empty_response_error(channel_id: i64) -> AppError {
+    AppError::Upstream(format!(
+        "upstream channel {channel_id} returned an empty semantic response"
+    ))
+}
+
+fn empty_stream_error(channel_id: i64) -> AppError {
+    AppError::Upstream(format!(
+        "upstream channel {channel_id} ended the stream before semantic content"
+    ))
+}
+
+fn stream_error_before_content(channel_id: i64, err: reqwest::Error) -> AppError {
+    AppError::Upstream(format!(
+        "upstream channel {channel_id} stream failed before semantic content: {err}"
+    ))
+}
+
+fn stream_chunk_has_done_marker(bytes: &Bytes) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .any(|data| data.trim() == "[DONE]")
+}
+
+async fn retryable_empty_finish(finish: &FinishContext, err: AppError) -> AppResult<FinishOutcome> {
+    finish
+        .state
+        .db
+        .release_gateway_reservation(&finish.reservation)
+        .await?;
+    Ok(FinishOutcome::Retry(err))
 }
 
 fn ensure_api_key_model_allowed(
@@ -529,6 +574,11 @@ struct FinishContext {
     reservation: GatewayReservation,
 }
 
+enum FinishOutcome {
+    Response(Response),
+    Retry(AppError),
+}
+
 struct LedgerContext<'a> {
     state: &'a AppState,
     auth: &'a crate::models::AuthContext,
@@ -543,7 +593,7 @@ struct LedgerContext<'a> {
 async fn finish_response(
     finish: FinishContext,
     upstream: reqwest::Response,
-) -> AppResult<Response> {
+) -> AppResult<FinishOutcome> {
     let status = upstream.status();
     if finish.request.stream {
         return finish_streaming_response(finish, upstream).await;
@@ -571,11 +621,19 @@ async fn finish_response(
         }
     };
     if !status.is_success() {
-        return Ok((status, Json(value)).into_response());
+        return Ok(FinishOutcome::Response(
+            (status, Json(value)).into_response(),
+        ));
+    }
+    if !response_has_semantic_content(&value, provider_protocol) {
+        return retryable_empty_finish(&finish, empty_response_error(finish.decision.channel.id))
+            .await;
     }
     let (body, usage) = client_response_body(finish.client_protocol, provider_protocol, value);
     settle_success(&finish, usage).await?;
-    Ok((status, Json(body)).into_response())
+    Ok(FinishOutcome::Response(
+        (status, Json(body)).into_response(),
+    ))
 }
 
 async fn settle_success(finish: &FinishContext, usage: Usage) -> AppResult<()> {
@@ -619,7 +677,7 @@ async fn settle_success(finish: &FinishContext, usage: Usage) -> AppResult<()> {
 async fn finish_streaming_response(
     finish: FinishContext,
     upstream: reqwest::Response,
-) -> AppResult<Response> {
+) -> AppResult<FinishOutcome> {
     let status = upstream.status();
     let provider_protocol = provider_protocol(&finish.decision.channel.provider);
     if !status.is_success() {
@@ -635,9 +693,46 @@ async fn finish_streaming_response(
         output_tokens: 0,
         cache_tokens: 0,
     };
+    let mut buffered = Vec::new();
+    if status.is_success() {
+        let mut saw_semantic = false;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    merge_usage_from_sse(&bytes, &mut usage);
+                    saw_semantic = stream_chunk_has_semantic_content(&bytes, provider_protocol);
+                    let done = stream_chunk_has_done_marker(&bytes);
+                    buffered.push(bytes);
+                    if saw_semantic || done {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    return retryable_empty_finish(
+                        &finish,
+                        stream_error_before_content(finish.decision.channel.id, err),
+                    )
+                    .await;
+                }
+            }
+        }
+        if !saw_semantic {
+            return retryable_empty_finish(&finish, empty_stream_error(finish.decision.channel.id))
+                .await;
+        }
+    }
     let finish_for_stream = finish.clone();
 
     let output = async_stream::stream! {
+        for bytes in buffered {
+            let bytes = translate_stream_chunk(
+                bytes,
+                provider_protocol,
+                finish_for_stream.client_protocol,
+                &finish_for_stream.request.model,
+            );
+            yield Ok::<Bytes, std::io::Error>(bytes);
+        }
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
@@ -697,7 +792,7 @@ async fn finish_streaming_response(
         header::CONTENT_TYPE,
         axum::http::HeaderValue::from_static("text/event-stream"),
     );
-    Ok(response)
+    Ok(FinishOutcome::Response(response))
 }
 
 async fn enqueue_ledger(ctx: LedgerContext<'_>, usage: Usage, status: &str) -> AppResult<()> {

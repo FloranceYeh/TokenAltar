@@ -149,3 +149,9 @@
 - **Status:** Completed
 - **Next Steps:** Add audit-log rows for future compliance-grade account operations if needed.
 - **Context:** Disabled accounts preserve ledger/resource history but cannot log in or use existing sessions/API keys; the last enabled admin and current admin session are protected from self-lockout.
+
+## [2026-05-19 18:49] Semantic Empty Reply Retry
+- **Changes:** Added semantic-empty reply detection for gateway responses and streams, releases failed-channel reservations, applies cooldown, retries fallback channels before client-visible semantic content, and documents the stream boundary.
+- **Status:** Completed
+- **Next Steps:** Tune the semantic detector if future gateway support adds non-text multimodal assistant outputs beyond the current text/tool surface.
+- **Context:** Whitespace-only text deltas, heartbeat/comment frames, usage-only frames, and terminal markers are empty; once text or tool-call semantics are forwarded, the gateway does not replay the stream.

@@ -160,6 +160,30 @@ pub fn client_response_body(
     }
 }
 
+pub fn response_has_semantic_content(value: &Value, provider_protocol: ProviderProtocol) -> bool {
+    semantic_response_text(value, provider_protocol).is_some_and(|text| !text.trim().is_empty())
+        || response_has_tool_content(value, provider_protocol)
+}
+
+pub fn stream_chunk_has_semantic_content(
+    bytes: &bytes::Bytes,
+    provider_protocol: ProviderProtocol,
+) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().any(|line| {
+        let Some(data) = line.strip_prefix("data:") else {
+            return false;
+        };
+        let data = data.trim();
+        if data == "[DONE]" || data.is_empty() {
+            return false;
+        }
+        serde_json::from_str::<Value>(data)
+            .ok()
+            .is_some_and(|value| stream_event_has_semantic_content(&value, provider_protocol))
+    })
+}
+
 fn parse_openai_chat_completions(value: &Value) -> AppResult<TextRequest> {
     let model = required_string(value, "model", "chat completions request requires model")?;
     let stream = value
@@ -692,6 +716,37 @@ fn stream_event_to_client(
     }
 }
 
+fn semantic_response_text(value: &Value, provider_protocol: ProviderProtocol) -> Option<String> {
+    match provider_protocol {
+        ProviderProtocol::OpenAiResponses => {
+            openai_output_text(value).or_else(|| openai_refusal_text(value))
+        }
+        ProviderProtocol::AnthropicMessages => anthropic_output_text(value),
+        ProviderProtocol::GeminiGenerateContent => gemini_output_text(value),
+    }
+}
+
+fn response_has_tool_content(value: &Value, provider_protocol: ProviderProtocol) -> bool {
+    match provider_protocol {
+        ProviderProtocol::OpenAiResponses => openai_response_has_tool_content(value),
+        ProviderProtocol::AnthropicMessages => anthropic_response_has_tool_content(value),
+        ProviderProtocol::GeminiGenerateContent => gemini_response_has_tool_content(value),
+    }
+}
+
+fn stream_event_has_semantic_content(value: &Value, provider_protocol: ProviderProtocol) -> bool {
+    stream_text_delta(value, provider_protocol).is_some_and(|delta| !delta.trim().is_empty())
+        || stream_event_has_tool_content(value, provider_protocol)
+}
+
+fn stream_event_has_tool_content(value: &Value, provider_protocol: ProviderProtocol) -> bool {
+    match provider_protocol {
+        ProviderProtocol::OpenAiResponses => openai_stream_event_has_tool_content(value),
+        ProviderProtocol::AnthropicMessages => anthropic_stream_event_has_tool_content(value),
+        ProviderProtocol::GeminiGenerateContent => gemini_response_has_tool_content(value),
+    }
+}
+
 fn output_text(value: &Value, provider_protocol: ProviderProtocol) -> String {
     match provider_protocol {
         ProviderProtocol::OpenAiResponses => openai_output_text(value),
@@ -732,6 +787,88 @@ pub fn openai_output_text(value: &Value) -> Option<String> {
         })
 }
 
+fn openai_refusal_text(value: &Value) -> Option<String> {
+    value
+        .get("output")
+        .and_then(Value::as_array)
+        .map(|outputs| {
+            outputs
+                .iter()
+                .flat_map(|output| {
+                    output
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|content| content.get("refusal").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .filter(|text| !text.is_empty())
+}
+
+fn openai_response_has_tool_content(value: &Value) -> bool {
+    value
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|outputs| {
+            outputs.iter().any(|output| {
+                output.get("type").and_then(Value::as_str) == Some("function_call")
+                    || output
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .is_some_and(|items| {
+                            items.iter().any(|item| {
+                                item.get("type")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|kind| {
+                                        matches!(kind, "tool_call" | "function_call" | "tool_use")
+                                    })
+                            })
+                        })
+            })
+        })
+        || value
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message").or_else(|| choice.get("delta")))
+            .is_some_and(openai_message_has_tool_content)
+}
+
+fn openai_message_has_tool_content(message: &Value) -> bool {
+    message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+        || message.get("function_call").is_some()
+}
+
+fn openai_stream_event_has_tool_content(value: &Value) -> bool {
+    value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| {
+            matches!(
+                kind,
+                "response.output_item.added" | "response.function_call_arguments.delta"
+            )
+        })
+        && value
+            .get("item")
+            .and_then(|item| item.get("type"))
+            .and_then(Value::as_str)
+            .map(|kind| kind == "function_call")
+            .unwrap_or(true)
+        || value
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("delta"))
+            .is_some_and(openai_message_has_tool_content)
+}
+
 fn anthropic_output_text(value: &Value) -> Option<String> {
     value
         .get("content")
@@ -747,6 +884,36 @@ fn anthropic_output_text(value: &Value) -> Option<String> {
         .or_else(|| openai_output_text(value))
 }
 
+fn anthropic_response_has_tool_content(value: &Value) -> bool {
+    value
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("tool_use"))
+        })
+        || openai_response_has_tool_content(value)
+}
+
+fn anthropic_stream_event_has_tool_content(value: &Value) -> bool {
+    match value.get("type").and_then(Value::as_str) {
+        Some("content_block_start") => {
+            value
+                .get("content_block")
+                .and_then(|block| block.get("type"))
+                .and_then(Value::as_str)
+                == Some("tool_use")
+        }
+        Some("content_block_delta") => value
+            .get("delta")
+            .and_then(|delta| delta.get("partial_json"))
+            .and_then(Value::as_str)
+            .is_some_and(|partial| !partial.trim().is_empty()),
+        _ => false,
+    }
+}
+
 fn gemini_output_text(value: &Value) -> Option<String> {
     value
         .get("candidates")
@@ -755,6 +922,28 @@ fn gemini_output_text(value: &Value) -> Option<String> {
         .and_then(|candidate| candidate.get("content"))
         .and_then(|content| gemini_parts_to_text(content.get("parts")))
         .filter(|text| !text.is_empty())
+}
+
+fn gemini_response_has_tool_content(value: &Value) -> bool {
+    value
+        .get("candidates")
+        .and_then(Value::as_array)
+        .is_some_and(|candidates| {
+            candidates.iter().any(|candidate| {
+                candidate
+                    .get("content")
+                    .and_then(|content| content.get("parts"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            part.get("functionCall").is_some()
+                                || part.get("function_call").is_some()
+                                || part.get("functionResponse").is_some()
+                                || part.get("function_response").is_some()
+                        })
+                    })
+            })
+        })
 }
 
 fn stream_text_delta(value: &Value, provider_protocol: ProviderProtocol) -> Option<String> {
