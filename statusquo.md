@@ -190,3 +190,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Verified with `pnpm --dir frontend build` and Playwright desktop/mobile screenshots for login and mobile register states; no API behavior changed.
+
+## [2026-05-20 00:02] Console Page Backgrounds
+- **Changes:** Renamed and moved root page background images into `frontend/public/backgrounds`, mapped available images to dashboard, API keys, health, pricing, economy, leaderboards, and settings tabs, and increased the console background layer visibility.
+- **Status:** Completed
+- **Next Steps:** Add dedicated artwork for users, channels, affinity, and ledger if those tabs need page-specific backgrounds too.
+- **Context:** Source files were PNG data despite `.webp` names, so the asset extensions were corrected during the move. Unmapped tabs continue to use the generic TokenAltar background.

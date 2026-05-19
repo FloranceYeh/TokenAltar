@@ -299,6 +299,15 @@ const tabDetails: Record<TabId, { eyebrow: string; title: string; description: s
     description: 'Local invite controls for a gated TokenAltar circle.',
   },
 }
+const tabBackgrounds: Partial<Record<TabId, string>> = {
+  dashboard: '/backgrounds/console-dashboard-overview.png',
+  keys: '/backgrounds/console-api-keys-vault.png',
+  health: '/backgrounds/console-channel-health.png',
+  prices: '/backgrounds/console-pricing-rules.png',
+  economy: '/backgrounds/console-point-economy.png',
+  leaderboards: '/backgrounds/console-leaderboards-honors.png',
+  settings: '/backgrounds/console-settings-chamber.png',
+}
 const tabs = computed<TabItem[]>(() => {
   const items: TabItem[] = [
     ['dashboard', 'Dashboard'],
@@ -342,6 +351,9 @@ const activeTabMeta = computed(() => {
   }
   return meta
 })
+const consoleBackgroundStyle = computed(() => ({
+  '--console-page-bg': `url(${tabBackgrounds[activeTab.value] || '/tokenaltar-background.png'})`,
+}))
 const editingApiKey = computed(() => apiKeys.value.find((item) => item.id === editingApiKeyId.value))
 const editingUser = computed(() => users.value.find((item) => item.id === editingUserId.value))
 const editingChannel = computed(() => channels.value.find((item) => item.id === editingChannelId.value))
@@ -1422,7 +1434,7 @@ onBeforeUnmount(stopConsoleEventStream)
 </script>
 
 <template>
-  <main class="shell" :class="{ 'auth-shell': !user }">
+  <main class="shell" :class="{ 'auth-shell': !user }" :style="consoleBackgroundStyle">
     <aside v-if="user" class="sidebar">
       <div class="brand">
         <div class="mark"><span>TA</span></div>
