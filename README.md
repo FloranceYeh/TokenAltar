@@ -75,7 +75,7 @@ The channel list returns the provider user's display name plus 48 fixed 30-minut
 The console has a dedicated Health page that shows all visible channels, labels each provider, and summarizes request-derived samples, empty replies, down windows, and TTFT alongside the 48-window strip.
 
 Runtime settings are managed from `/api/settings`, with the current typed view available at `/api/runtime-settings`.
-Admins can configure seed balances, pricing units and fallback prices, settlement rounding, surge thresholds and multipliers, routing retry/cooldown/weight knobs, ledger/cache capacities, and console defaults for new keys and channels.
+Admins can configure seed balances, 1M-token fallback prices, settlement rounding, surge thresholds and multipliers, routing retry/cooldown/weight knobs, ledger/cache capacities, and console defaults for new keys and channels.
 Settings are stored in `system_settings`; request-time economy and routing values are read from the database so most changes apply without rebuilding.
 Startup-sized values such as ledger queue capacity and affinity cache capacity apply when the process starts.
 Surge pressure compares tokens settled in the last hour with the current primary quota-window capacity converted to a tokens-per-hour rate; when no healthy primary-window capacity exists, the dashboard reports `no_capacity` without applying peak pricing.
@@ -86,7 +86,8 @@ Surge pressure compares tokens settled in the last hour with the current primary
 - Channel status moves to `cooling` when any configured quota window is exhausted.
 - Channel health history is inferred from actual request outcomes rather than scheduled probes. Empty semantic replies and upstream failures are retained as window status samples, but they do not contribute to average TTFT.
 - Regular users can add and manage their own upstream channels. Console channel reads are owner-scoped for regular users and always redact upstream API keys.
-- Model prices are matched per channel first, then fall back to global model defaults managed by admins.
+- Model prices are stored and settled per 1M tokens. They are matched per channel first, then fall back to global model defaults managed by admins.
+- Built-in global price presets cover GPT-5.5, GPT-5.4, GPT-5.3-codex, GPT-5.2, GPT-5.2-codex, Claude Opus 4.7/4.6/4.5/4.1/4, Claude Sonnet 4.6/4.5/4, and Claude Haiku 4.5. The single cache price field represents cached input/cache-hit pricing.
 - Console live updates are topic-based invalidations, not full data snapshots; REST endpoints remain the permission boundary for owner-scoped and admin-only data.
 - If no model price row matches, fallback input/output/cache rates come from Settings instead of code constants.
 - Invite-gated registration is controlled by `invite_required` and `invite_code_default` in the Settings tab.

@@ -133,9 +133,9 @@ export type EditableChannelWindow = DefaultChannelWindow & {
 export type ModelPrice = {
   channel_id: number | null
   model_pattern: string
-  input_price_per_1k: number
-  output_price_per_1k: number
-  cache_price_per_1k: number
+  input_price_per_1m: number
+  output_price_per_1m: number
+  cache_price_per_1m: number
 }
 
 export type AffinityRule = {

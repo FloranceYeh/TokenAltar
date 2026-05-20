@@ -124,8 +124,8 @@ async fn anonymous_leaderboard_masks_user_identity() {
         r#"
         INSERT INTO ledger_entries(
           request_id, user_id, api_key_id, channel_id, provider_user_id, model, tokenizer,
-          input_tokens, output_tokens, cache_tokens, input_price_per_1k, output_price_per_1k,
-          cache_price_per_1k, surge_multiplier, fire_sale_discount, total_points,
+          input_tokens, output_tokens, cache_tokens, input_price_per_1m, output_price_per_1m,
+          cache_price_per_1m, surge_multiplier, fire_sale_discount, total_points,
           provider_points, status, formula_note
         ) VALUES ('req_lb', ?, 1, 1, ?, 'gpt-test', 'test', 10, 5, 0, 1, 3, 0, 1, 1, 1, 1, 'success', 'test')
         "#,
@@ -162,8 +162,8 @@ async fn leaderboards_support_day_period_and_skip_failed_ledger_rows() {
         r#"
         INSERT INTO ledger_entries(
           request_id, user_id, api_key_id, channel_id, provider_user_id, model, tokenizer,
-          input_tokens, output_tokens, cache_tokens, input_price_per_1k, output_price_per_1k,
-          cache_price_per_1k, surge_multiplier, fire_sale_discount, total_points,
+          input_tokens, output_tokens, cache_tokens, input_price_per_1m, output_price_per_1m,
+          cache_price_per_1m, surge_multiplier, fire_sale_discount, total_points,
           provider_points, status, formula_note, created_at
         ) VALUES
           ('req_daily_success', ?, 1, 1, ?, 'gpt-test', 'test', 10, 5, 0, 1, 3, 0, 1, 1, 2, 1, 'success', 'ok', datetime('now')),
@@ -669,9 +669,9 @@ async fn ledger_settlement_applies_only_reservation_delta() {
             price: ModelPrice {
                 channel_id: None,
                 model_pattern: "default".to_string(),
-                input_price_per_1k: 1.0,
-                output_price_per_1k: 3.0,
-                cache_price_per_1k: 0.2,
+                input_price_per_1m: 1.0,
+                output_price_per_1m: 3.0,
+                cache_price_per_1m: 0.2,
             },
             surge_multiplier: 1.0,
             fire_sale_discount: 1.0,

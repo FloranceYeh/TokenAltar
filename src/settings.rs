@@ -14,11 +14,11 @@ pub const SETTING_DEFAULTS: &[(&str, &str)] = &[
     ("invite_code_default", "TOKENALTAR"),
     ("initial_admin_points", "1000000"),
     ("initial_user_points", "1000"),
-    ("pricing_unit_tokens", "1000"),
+    ("pricing_unit_tokens", "1000000"),
     ("settlement_round_digits", "4"),
-    ("fallback_input_price_per_unit", "1.0"),
-    ("fallback_output_price_per_unit", "3.0"),
-    ("fallback_cache_price_per_unit", "0.2"),
+    ("fallback_input_price_per_unit", "5.0"),
+    ("fallback_output_price_per_unit", "30.0"),
+    ("fallback_cache_price_per_unit", "0.5"),
     ("surge_low_threshold", "0.30"),
     ("surge_high_threshold", "0.80"),
     ("surge_idle_multiplier", "0.5"),
@@ -172,9 +172,9 @@ impl RuntimeSettings {
         ModelPrice {
             channel_id: None,
             model_pattern: "default".to_string(),
-            input_price_per_1k: self.fallback_input_price_per_unit,
-            output_price_per_1k: self.fallback_output_price_per_unit,
-            cache_price_per_1k: self.fallback_cache_price_per_unit,
+            input_price_per_1m: self.fallback_input_price_per_unit,
+            output_price_per_1m: self.fallback_output_price_per_unit,
+            cache_price_per_1m: self.fallback_cache_price_per_unit,
         }
     }
 
@@ -182,6 +182,11 @@ impl RuntimeSettings {
         if self.surge_low_threshold >= self.surge_high_threshold {
             return Err(AppError::BadRequest(
                 "surge_low_threshold must be lower than surge_high_threshold".to_string(),
+            ));
+        }
+        if (self.pricing_unit_tokens - 1_000_000.0).abs() > f64::EPSILON {
+            return Err(AppError::BadRequest(
+                "pricing_unit_tokens is fixed at 1000000".to_string(),
             ));
         }
         validate_provider(&self.default_channel_provider)?;

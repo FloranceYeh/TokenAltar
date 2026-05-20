@@ -75,6 +75,33 @@ const apiKeyFilter = ref('')
 const channelFilter = ref('')
 const healthFilter = ref('')
 const userFilter = ref('')
+const selectedPricePreset = ref('')
+
+type PricePreset = {
+  key: string
+  label: string
+  pattern: string
+  input: number
+  output: number
+  cache: number
+}
+
+const pricePresets: PricePreset[] = [
+  { key: 'gpt-5.5', label: 'GPT-5.5', pattern: '^gpt-5\\.5$', input: 5, output: 30, cache: 0.5 },
+  { key: 'gpt-5.4', label: 'GPT-5.4', pattern: '^gpt-5\\.4$', input: 2.5, output: 15, cache: 0.25 },
+  { key: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', pattern: '^gpt-5\\.3-codex$', input: 2.5, output: 15, cache: 0.25 },
+  { key: 'gpt-5.2', label: 'GPT-5.2', pattern: '^gpt-5\\.2$', input: 2.5, output: 15, cache: 0.25 },
+  { key: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', pattern: '^gpt-5\\.2-codex$', input: 2.5, output: 15, cache: 0.25 },
+  { key: 'claude-opus-4.7', label: 'Claude Opus 4.7', pattern: '^claude-opus-4[.-]7(-.+)?$', input: 5, output: 25, cache: 0.5 },
+  { key: 'claude-opus-4.6', label: 'Claude Opus 4.6', pattern: '^claude-opus-4[.-]6(-.+)?$', input: 5, output: 25, cache: 0.5 },
+  { key: 'claude-opus-4.5', label: 'Claude Opus 4.5', pattern: '^claude-opus-4[.-]5(-.+)?$', input: 5, output: 25, cache: 0.5 },
+  { key: 'claude-opus-4.1', label: 'Claude Opus 4.1', pattern: '^claude-opus-4[.-]1(-.+)?$', input: 15, output: 75, cache: 1.5 },
+  { key: 'claude-opus-4', label: 'Claude Opus 4', pattern: '^claude-opus-4(-.+)?$', input: 15, output: 75, cache: 1.5 },
+  { key: 'claude-sonnet-4.6', label: 'Claude Sonnet 4.6', pattern: '^claude-sonnet-4[.-]6(-.+)?$', input: 3, output: 15, cache: 0.3 },
+  { key: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5', pattern: '^claude-sonnet-4[.-]5(-.+)?$', input: 3, output: 15, cache: 0.3 },
+  { key: 'claude-sonnet-4', label: 'Claude Sonnet 4', pattern: '^claude-sonnet-4(-.+)?$', input: 3, output: 15, cache: 0.3 },
+  { key: 'claude-haiku-4.5', label: 'Claude Haiku 4.5', pattern: '^claude-haiku-4[.-]5(-.+)?$', input: 1, output: 5, cache: 0.1 },
+]
 
 const loginForm = reactive({ email: '', password: '' })
 const registerForm = reactive({ email: '', password: '', display_name: '', invite_code: '' })
@@ -110,9 +137,9 @@ const channelForm = reactive({
 const priceForm = reactive({
   channel_id: null as number | null,
   model_pattern: 'default',
-  input_price_per_1k: null as number | null,
-  output_price_per_1k: null as number | null,
-  cache_price_per_1k: null as number | null,
+  input_price_per_1m: null as number | null,
+  output_price_per_1m: null as number | null,
+  cache_price_per_1m: null as number | null,
 })
 const ruleForm = reactive({
   name: 'tenant-session',
@@ -140,11 +167,10 @@ const settingsSchema = [
   { key: 'invite_code_default', label: 'Default Invite Code', type: 'text' },
   { key: 'initial_admin_points', label: 'Initial Admin Points', type: 'number' },
   { key: 'initial_user_points', label: 'Initial User Points', type: 'number' },
-  { key: 'pricing_unit_tokens', label: 'Pricing Unit Tokens', type: 'number' },
   { key: 'settlement_round_digits', label: 'Settlement Round Digits', type: 'number' },
-  { key: 'fallback_input_price_per_unit', label: 'Fallback Input Price', type: 'number' },
-  { key: 'fallback_output_price_per_unit', label: 'Fallback Output Price', type: 'number' },
-  { key: 'fallback_cache_price_per_unit', label: 'Fallback Cache Price', type: 'number' },
+  { key: 'fallback_input_price_per_unit', label: 'Fallback Input Price / 1M', type: 'number' },
+  { key: 'fallback_output_price_per_unit', label: 'Fallback Output Price / 1M', type: 'number' },
+  { key: 'fallback_cache_price_per_unit', label: 'Fallback Cache Price / 1M', type: 'number' },
   { key: 'surge_low_threshold', label: 'Surge Low Threshold', type: 'number' },
   { key: 'surge_high_threshold', label: 'Surge High Threshold', type: 'number' },
   { key: 'surge_idle_multiplier', label: 'Surge Idle Multiplier', type: 'number' },
@@ -946,6 +972,15 @@ async function savePrice() {
   await loadPrices()
 }
 
+function applyPricePreset() {
+  const preset = pricePresets.find((item) => item.key === selectedPricePreset.value)
+  if (!preset) return
+  priceForm.model_pattern = preset.pattern
+  priceForm.input_price_per_1m = preset.input
+  priceForm.output_price_per_1m = preset.output
+  priceForm.cache_price_per_1m = preset.cache
+}
+
 function priceScope(price: ModelPrice) {
   if (!price.channel_id) return isAdmin.value ? 'Global default' : 'Default fallback'
   const channel = channels.value.find((item) => item.id === price.channel_id)
@@ -1057,14 +1092,14 @@ function applyRuntimeDefaults() {
   if (channelForm.provider_share === null) {
     channelForm.provider_share = runtimeSettings.value.default_channel_provider_share ?? null
   }
-  if (priceForm.input_price_per_1k === null) {
-    priceForm.input_price_per_1k = runtimeSettings.value.fallback_input_price_per_unit ?? null
+  if (priceForm.input_price_per_1m === null) {
+    priceForm.input_price_per_1m = runtimeSettings.value.fallback_input_price_per_unit ?? null
   }
-  if (priceForm.output_price_per_1k === null) {
-    priceForm.output_price_per_1k = runtimeSettings.value.fallback_output_price_per_unit ?? null
+  if (priceForm.output_price_per_1m === null) {
+    priceForm.output_price_per_1m = runtimeSettings.value.fallback_output_price_per_unit ?? null
   }
-  if (priceForm.cache_price_per_1k === null) {
-    priceForm.cache_price_per_1k = runtimeSettings.value.fallback_cache_price_per_unit ?? null
+  if (priceForm.cache_price_per_1m === null) {
+    priceForm.cache_price_per_1m = runtimeSettings.value.fallback_cache_price_per_unit ?? null
   }
   if (!editingUserId.value && !userForm.email && userForm.points_balance === 0) {
     userForm.points_balance = runtimeSettings.value.initial_user_points ?? 0
@@ -1689,25 +1724,26 @@ onBeforeUnmount(stopConsoleEventStream)
             <button :disabled="priceSaveDisabled" @click="savePrice">Save</button>
           </div>
           <div class="form-grid compact panel">
+            <label>Preset <select v-model="selectedPricePreset" @change="applyPricePreset"><option value="">Custom</option><option v-for="preset in pricePresets" :key="preset.key" :value="preset.key">{{ preset.label }}</option></select></label>
             <label>Scope <select v-model="priceForm.channel_id" :disabled="!isAdmin && channels.length === 0"><option v-if="isAdmin" :value="null">Global default</option><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channelOptionLabel(channel) }}</option></select></label>
             <label>Model Pattern <input v-model="priceForm.model_pattern" /></label>
-            <label>Input / 1k <input v-model.number="priceForm.input_price_per_1k" type="number" step="0.01" /></label>
-            <label>Output / 1k <input v-model.number="priceForm.output_price_per_1k" type="number" step="0.01" /></label>
-            <label>Cache / 1k <input v-model.number="priceForm.cache_price_per_1k" type="number" step="0.01" /></label>
+            <label>Input / 1M <input v-model.number="priceForm.input_price_per_1m" type="number" step="0.01" /></label>
+            <label>Output / 1M <input v-model.number="priceForm.output_price_per_1m" type="number" step="0.01" /></label>
+            <label>Cache / 1M <input v-model.number="priceForm.cache_price_per_1m" type="number" step="0.01" /></label>
           </div>
           <div class="table-shell">
             <table>
               <thead>
-                <tr><th>Scope</th><th v-if="isAdmin">Owner</th><th>Model</th><th>Input / 1k</th><th>Output / 1k</th><th>Cache / 1k</th></tr>
+                <tr><th>Scope</th><th v-if="isAdmin">Owner</th><th>Model</th><th>Input / 1M</th><th>Output / 1M</th><th>Cache / 1M</th></tr>
               </thead>
               <tbody>
                 <tr v-for="price in prices" :key="`${price.channel_id || 'global'}:${price.model_pattern}`" :class="{ 'muted-row': !isAdmin && isGlobalPrice(price) }">
                   <td><span class="scope-chip" :class="{ fallback: isGlobalPrice(price) }">{{ priceScope(price) }}</span></td>
                   <td v-if="isAdmin" class="muted-cell">{{ priceOwnerLabel(price) }}</td>
                   <td>{{ price.model_pattern }}</td>
-                  <td>{{ price.input_price_per_1k }}</td>
-                  <td>{{ price.output_price_per_1k }}</td>
-                  <td>{{ price.cache_price_per_1k }}</td>
+                  <td>{{ price.input_price_per_1m }}</td>
+                  <td>{{ price.output_price_per_1m }}</td>
+                  <td>{{ price.cache_price_per_1m }}</td>
                 </tr>
                 <tr v-if="prices.length === 0">
                   <td :colspan="isAdmin ? 6 : 5" class="empty-row">No pricing rules configured.</td>

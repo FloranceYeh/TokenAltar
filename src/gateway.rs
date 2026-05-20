@@ -186,7 +186,7 @@ async fn handle_gateway(
     let global_prices = state.db.global_price_book().await?;
     let reserve_price = select_price(&request.model, &global_prices, &settings);
     let token_estimate = crate::tokenizer::estimate_request_tokens(&request);
-    let reserve = token_estimate.tokens as f64 * reserve_price.input_price_per_1k
+    let reserve = token_estimate.tokens as f64 * reserve_price.input_price_per_1m
         / settings.pricing_unit_tokens;
     ensure_affordable(&auth.user, &api_key, reserve)?;
 
@@ -241,7 +241,7 @@ async fn handle_gateway(
         )
         .0;
         let selected_reserve =
-            token_estimate.tokens as f64 * price.input_price_per_1k / settings.pricing_unit_tokens;
+            token_estimate.tokens as f64 * price.input_price_per_1m / settings.pricing_unit_tokens;
         ensure_affordable(&auth.user, &api_key, selected_reserve)?;
         let reservation = match state
             .db

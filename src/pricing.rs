@@ -52,9 +52,9 @@ pub fn settle(
     provider_share: f64,
     settings: &RuntimeSettings,
 ) -> Settlement {
-    let base = (usage.input_tokens as f64 * price.input_price_per_1k
-        + usage.output_tokens as f64 * price.output_price_per_1k
-        + usage.cache_tokens as f64 * price.cache_price_per_1k)
+    let base = (usage.input_tokens as f64 * price.input_price_per_1m
+        + usage.output_tokens as f64 * price.output_price_per_1m
+        + usage.cache_tokens as f64 * price.cache_price_per_1m)
         / settings.pricing_unit_tokens;
     let total_points = round_to_digits(
         base * surge_multiplier * fire_sale_discount,
@@ -65,16 +65,13 @@ pub fn settle(
         settings.settlement_round_digits,
     );
     let formula_note = format!(
-        "input {} * {:.4}/{} tokens + cache {} * {:.4}/{} tokens + output {} * {:.4}/{} tokens, surge {:.2}x, fire sale {:.2}x",
+        "input {} * {:.4}/1M tokens + cache {} * {:.4}/1M tokens + output {} * {:.4}/1M tokens, surge {:.2}x, fire sale {:.2}x",
         usage.input_tokens,
-        price.input_price_per_1k,
-        settings.pricing_unit_tokens,
+        price.input_price_per_1m,
         usage.cache_tokens,
-        price.cache_price_per_1k,
-        settings.pricing_unit_tokens,
+        price.cache_price_per_1m,
         usage.output_tokens,
-        price.output_price_per_1k,
-        settings.pricing_unit_tokens,
+        price.output_price_per_1m,
         surge_multiplier,
         fire_sale_discount
     );
@@ -86,7 +83,7 @@ pub fn settle(
 }
 
 pub fn reserve_cost(text: &str, price: &ModelPrice, settings: &RuntimeSettings) -> f64 {
-    estimate_text_tokens("default", text).tokens as f64 * price.input_price_per_1k
+    estimate_text_tokens("default", text).tokens as f64 * price.input_price_per_1m
         / settings.pricing_unit_tokens
 }
 
@@ -150,17 +147,17 @@ mod tests {
             &ModelPrice {
                 channel_id: None,
                 model_pattern: "default".to_string(),
-                input_price_per_1k: 1.0,
-                output_price_per_1k: 3.0,
-                cache_price_per_1k: 0.2,
+                input_price_per_1m: 5.0,
+                output_price_per_1m: 30.0,
+                cache_price_per_1m: 0.5,
             },
             0.5,
             0.2,
             0.7,
             &test_settings(),
         );
-        assert_eq!(settlement.total_points, 0.41);
-        assert_eq!(settlement.provider_points, 0.287);
+        assert_eq!(settlement.total_points, 0.0035);
+        assert_eq!(settlement.provider_points, 0.0025);
     }
 
     #[test]
@@ -171,22 +168,22 @@ mod tests {
                 ModelPrice {
                     channel_id: Some(7),
                     model_pattern: "default".to_string(),
-                    input_price_per_1k: 9.0,
-                    output_price_per_1k: 9.0,
-                    cache_price_per_1k: 0.0,
+                    input_price_per_1m: 9.0,
+                    output_price_per_1m: 9.0,
+                    cache_price_per_1m: 0.0,
                 },
                 ModelPrice {
                     channel_id: None,
                     model_pattern: "gpt-special".to_string(),
-                    input_price_per_1k: 1.0,
-                    output_price_per_1k: 1.0,
-                    cache_price_per_1k: 0.0,
+                    input_price_per_1m: 1.0,
+                    output_price_per_1m: 1.0,
+                    cache_price_per_1m: 0.0,
                 },
             ],
             &test_settings(),
         );
         assert_eq!(price.channel_id, Some(7));
-        assert_eq!(price.input_price_per_1k, 9.0);
+        assert_eq!(price.input_price_per_1m, 9.0);
     }
 
     #[test]

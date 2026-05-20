@@ -232,3 +232,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Presets follow new-api locality defaults by omitting model names from their cache keys while retaining model-scoped keys for manually created rules by default.
+
+## [2026-05-20 15:59] 1M Model Pricing Presets
+- **Changes:** Migrated model and ledger price columns to per-1M-token semantics, fixed `pricing_unit_tokens` at 1,000,000, added GPT-5.5/GPT-5.x and Claude Opus/Sonnet/Haiku global price presets, and exposed the same presets in the pricing form.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Claude cache write tiers are not modeled separately; the single cache price field maps to cached input/cache-hit pricing.

@@ -1543,7 +1543,7 @@ impl Database {
         let rows = if user.role == "admin" {
             sqlx::query(
                 r#"
-                SELECT channel_id, model_pattern, input_price_per_1k, output_price_per_1k, cache_price_per_1k
+                SELECT channel_id, model_pattern, input_price_per_1m, output_price_per_1m, cache_price_per_1m
                 FROM model_prices
                 ORDER BY channel_id IS NOT NULL, channel_id, id
                 "#,
@@ -1553,7 +1553,7 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT p.channel_id, p.model_pattern, p.input_price_per_1k, p.output_price_per_1k, p.cache_price_per_1k
+                SELECT p.channel_id, p.model_pattern, p.input_price_per_1m, p.output_price_per_1m, p.cache_price_per_1m
                 FROM model_prices p
                 LEFT JOIN channels c ON p.channel_id = c.id
                 WHERE p.channel_id IS NULL OR c.owner_user_id = ?
@@ -1569,9 +1569,9 @@ impl Database {
             .map(|row| ModelPrice {
                 channel_id: row.get("channel_id"),
                 model_pattern: row.get("model_pattern"),
-                input_price_per_1k: row.get("input_price_per_1k"),
-                output_price_per_1k: row.get("output_price_per_1k"),
-                cache_price_per_1k: row.get("cache_price_per_1k"),
+                input_price_per_1m: row.get("input_price_per_1m"),
+                output_price_per_1m: row.get("output_price_per_1m"),
+                cache_price_per_1m: row.get("cache_price_per_1m"),
             })
             .collect())
     }
@@ -1579,7 +1579,7 @@ impl Database {
     pub async fn price_book_for_channel(&self, channel_id: i64) -> AppResult<Vec<ModelPrice>> {
         let rows = sqlx::query(
             r#"
-            SELECT channel_id, model_pattern, input_price_per_1k, output_price_per_1k, cache_price_per_1k
+            SELECT channel_id, model_pattern, input_price_per_1m, output_price_per_1m, cache_price_per_1m
             FROM model_prices
             WHERE channel_id IS NULL OR channel_id = ?
             ORDER BY channel_id IS NULL, id
@@ -1593,9 +1593,9 @@ impl Database {
             .map(|row| ModelPrice {
                 channel_id: row.get("channel_id"),
                 model_pattern: row.get("model_pattern"),
-                input_price_per_1k: row.get("input_price_per_1k"),
-                output_price_per_1k: row.get("output_price_per_1k"),
-                cache_price_per_1k: row.get("cache_price_per_1k"),
+                input_price_per_1m: row.get("input_price_per_1m"),
+                output_price_per_1m: row.get("output_price_per_1m"),
+                cache_price_per_1m: row.get("cache_price_per_1m"),
             })
             .collect())
     }
@@ -1603,7 +1603,7 @@ impl Database {
     pub async fn global_price_book(&self) -> AppResult<Vec<ModelPrice>> {
         let rows = sqlx::query(
             r#"
-            SELECT channel_id, model_pattern, input_price_per_1k, output_price_per_1k, cache_price_per_1k
+            SELECT channel_id, model_pattern, input_price_per_1m, output_price_per_1m, cache_price_per_1m
             FROM model_prices
             WHERE channel_id IS NULL
             ORDER BY id
@@ -1616,9 +1616,9 @@ impl Database {
             .map(|row| ModelPrice {
                 channel_id: row.get("channel_id"),
                 model_pattern: row.get("model_pattern"),
-                input_price_per_1k: row.get("input_price_per_1k"),
-                output_price_per_1k: row.get("output_price_per_1k"),
-                cache_price_per_1k: row.get("cache_price_per_1k"),
+                input_price_per_1m: row.get("input_price_per_1m"),
+                output_price_per_1m: row.get("output_price_per_1m"),
+                cache_price_per_1m: row.get("cache_price_per_1m"),
             })
             .collect())
     }
@@ -1686,36 +1686,36 @@ impl Database {
             let _ = self.get_channel(channel_id).await?;
             sqlx::query(
                 r#"
-                INSERT INTO model_prices(channel_id, model_pattern, input_price_per_1k, output_price_per_1k, cache_price_per_1k)
+                INSERT INTO model_prices(channel_id, model_pattern, input_price_per_1m, output_price_per_1m, cache_price_per_1m)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id, model_pattern) DO UPDATE SET
-                  input_price_per_1k = excluded.input_price_per_1k,
-                  output_price_per_1k = excluded.output_price_per_1k,
-                  cache_price_per_1k = excluded.cache_price_per_1k
+                  input_price_per_1m = excluded.input_price_per_1m,
+                  output_price_per_1m = excluded.output_price_per_1m,
+                  cache_price_per_1m = excluded.cache_price_per_1m
                 "#,
             )
             .bind(channel_id)
             .bind(&price.model_pattern)
-            .bind(price.input_price_per_1k)
-            .bind(price.output_price_per_1k)
-            .bind(price.cache_price_per_1k)
+            .bind(price.input_price_per_1m)
+            .bind(price.output_price_per_1m)
+            .bind(price.cache_price_per_1m)
             .execute(&self.pool)
             .await?;
         } else {
             sqlx::query(
                 r#"
-                INSERT INTO model_prices(channel_id, model_pattern, input_price_per_1k, output_price_per_1k, cache_price_per_1k)
+                INSERT INTO model_prices(channel_id, model_pattern, input_price_per_1m, output_price_per_1m, cache_price_per_1m)
                 VALUES (NULL, ?, ?, ?, ?)
                 ON CONFLICT(model_pattern) WHERE channel_id IS NULL DO UPDATE SET
-                  input_price_per_1k = excluded.input_price_per_1k,
-                  output_price_per_1k = excluded.output_price_per_1k,
-                  cache_price_per_1k = excluded.cache_price_per_1k
+                  input_price_per_1m = excluded.input_price_per_1m,
+                  output_price_per_1m = excluded.output_price_per_1m,
+                  cache_price_per_1m = excluded.cache_price_per_1m
                 "#,
             )
             .bind(&price.model_pattern)
-            .bind(price.input_price_per_1k)
-            .bind(price.output_price_per_1k)
-            .bind(price.cache_price_per_1k)
+            .bind(price.input_price_per_1m)
+            .bind(price.output_price_per_1m)
+            .bind(price.cache_price_per_1m)
             .execute(&self.pool)
             .await?;
         }
@@ -1812,8 +1812,8 @@ impl Database {
             r#"
             INSERT OR IGNORE INTO ledger_entries(
               request_id, user_id, api_key_id, channel_id, provider_user_id, model, tokenizer,
-              input_tokens, output_tokens, cache_tokens, input_price_per_1k, output_price_per_1k,
-              cache_price_per_1k, surge_multiplier, fire_sale_discount, total_points,
+              input_tokens, output_tokens, cache_tokens, input_price_per_1m, output_price_per_1m,
+              cache_price_per_1m, surge_multiplier, fire_sale_discount, total_points,
               provider_points, status, formula_note
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -1828,9 +1828,9 @@ impl Database {
         .bind(event.usage.input_tokens)
         .bind(event.usage.output_tokens)
         .bind(event.usage.cache_tokens)
-        .bind(event.price.input_price_per_1k)
-        .bind(event.price.output_price_per_1k)
-        .bind(event.price.cache_price_per_1k)
+        .bind(event.price.input_price_per_1m)
+        .bind(event.price.output_price_per_1m)
+        .bind(event.price.cache_price_per_1m)
         .bind(event.surge_multiplier)
         .bind(event.fire_sale_discount)
         .bind(event.total_points)

@@ -71,6 +71,61 @@ async fn built_in_affinity_presets_cover_model_families() {
 }
 
 #[tokio::test]
+async fn built_in_price_presets_use_one_million_token_unit() {
+    let state = AppState::new(&test_config("sqlite::memory:"))
+        .await
+        .unwrap();
+    let admin = state
+        .db
+        .create_user("pricing-admin@example.com", "password123", "Pricing Admin")
+        .await
+        .unwrap();
+    let prices = state.db.list_prices(&admin).await.unwrap();
+
+    let gpt_55 = prices
+        .iter()
+        .find(|price| price.model_pattern == r"^gpt-5\.5$")
+        .unwrap();
+    assert_eq!(gpt_55.input_price_per_1m, 5.0);
+    assert_eq!(gpt_55.output_price_per_1m, 30.0);
+    assert_eq!(gpt_55.cache_price_per_1m, 0.5);
+
+    let gpt_54 = prices
+        .iter()
+        .find(|price| price.model_pattern == r"^gpt-5\.4$")
+        .unwrap();
+    assert_eq!(gpt_54.input_price_per_1m, 2.5);
+    assert_eq!(gpt_54.output_price_per_1m, 15.0);
+    assert_eq!(gpt_54.cache_price_per_1m, 0.25);
+
+    let opus_47 = prices
+        .iter()
+        .find(|price| price.model_pattern == r"^claude-opus-4[.-]7(-.+)?$")
+        .unwrap();
+    assert_eq!(opus_47.input_price_per_1m, 5.0);
+    assert_eq!(opus_47.output_price_per_1m, 25.0);
+    assert_eq!(opus_47.cache_price_per_1m, 0.5);
+
+    let haiku_45 = prices
+        .iter()
+        .find(|price| price.model_pattern == r"^claude-haiku-4[.-]5(-.+)?$")
+        .unwrap();
+    assert_eq!(haiku_45.input_price_per_1m, 1.0);
+    assert_eq!(haiku_45.output_price_per_1m, 5.0);
+    assert_eq!(haiku_45.cache_price_per_1m, 0.1);
+
+    assert_eq!(
+        state
+            .db
+            .runtime_settings()
+            .await
+            .unwrap()
+            .pricing_unit_tokens,
+        1_000_000.0
+    );
+}
+
+#[tokio::test]
 async fn openai_responses_gateway_settles_ledger_and_limits() {
     let upstream = spawn_upstream(json!({
         "id": "resp_test",
@@ -248,9 +303,9 @@ async fn channel_price_override_is_used_for_settlement() {
         .upsert_price(&ModelPrice {
             channel_id: None,
             model_pattern: "gpt-special".to_string(),
-            input_price_per_1k: 1.0,
-            output_price_per_1k: 1.0,
-            cache_price_per_1k: 0.0,
+            input_price_per_1m: 1_000.0,
+            output_price_per_1m: 1_000.0,
+            cache_price_per_1m: 0.0,
         })
         .await
         .unwrap();
@@ -259,9 +314,9 @@ async fn channel_price_override_is_used_for_settlement() {
         .upsert_price(&ModelPrice {
             channel_id: Some(1),
             model_pattern: "gpt-special".to_string(),
-            input_price_per_1k: 10.0,
-            output_price_per_1k: 20.0,
-            cache_price_per_1k: 0.0,
+            input_price_per_1m: 10_000.0,
+            output_price_per_1m: 20_000.0,
+            cache_price_per_1m: 0.0,
         })
         .await
         .unwrap();
@@ -285,13 +340,13 @@ async fn channel_price_override_is_used_for_settlement() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let row: (f64, f64) = sqlx::query_as(
-        "SELECT input_price_per_1k, output_price_per_1k FROM ledger_entries WHERE model = 'gpt-special'",
+        "SELECT input_price_per_1m, output_price_per_1m FROM ledger_entries WHERE model = 'gpt-special'",
     )
     .fetch_one(&state.db.pool)
     .await
     .unwrap();
-    assert_eq!(row.0, 10.0);
-    assert_eq!(row.1, 20.0);
+    assert_eq!(row.0, 10_000.0);
+    assert_eq!(row.1, 20_000.0);
 }
 
 #[tokio::test]
@@ -309,11 +364,11 @@ async fn runtime_settings_drive_fallback_price_and_surge_multipliers() {
         .upsert_settings(&[
             tokenaltar::db::SettingUpdate {
                 key: "fallback_input_price_per_unit".to_string(),
-                value: "7".to_string(),
+                value: "7000".to_string(),
             },
             tokenaltar::db::SettingUpdate {
                 key: "fallback_output_price_per_unit".to_string(),
-                value: "11".to_string(),
+                value: "11000".to_string(),
             },
             tokenaltar::db::SettingUpdate {
                 key: "fallback_cache_price_per_unit".to_string(),
@@ -350,13 +405,13 @@ async fn runtime_settings_drive_fallback_price_and_surge_multipliers() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let row: (f64, f64, f64, f64) = sqlx::query_as(
-        "SELECT input_price_per_1k, output_price_per_1k, surge_multiplier, total_points FROM ledger_entries WHERE model = 'unknown-price-model'",
+        "SELECT input_price_per_1m, output_price_per_1m, surge_multiplier, total_points FROM ledger_entries WHERE model = 'unknown-price-model'",
     )
     .fetch_one(&state.db.pool)
     .await
     .unwrap();
-    assert_eq!(row.0, 7.0);
-    assert_eq!(row.1, 11.0);
+    assert_eq!(row.0, 7000.0);
+    assert_eq!(row.1, 11000.0);
     assert_eq!(row.2, 0.25);
     assert_eq!(row.3, 4.5);
 }

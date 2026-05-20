@@ -155,9 +155,9 @@ pub struct ChannelQuotaWindow {
 pub struct ModelPrice {
     pub channel_id: Option<i64>,
     pub model_pattern: String,
-    pub input_price_per_1k: f64,
-    pub output_price_per_1k: f64,
-    pub cache_price_per_1k: f64,
+    pub input_price_per_1m: f64,
+    pub output_price_per_1m: f64,
+    pub cache_price_per_1m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
