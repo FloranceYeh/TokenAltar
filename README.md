@@ -14,6 +14,10 @@ It pools upstream OpenAI, Anthropic, Gemini, and compatible model capacity behin
 
 TokenAltar runs as a single Rust process with SQLite persistence and embedded frontend assets. There is no separate web server to deploy after the console is built.
 
+## Documentation
+
+- [中文使用 Wiki](docs/wiki.zh-CN.md)
+
 ## What It Does
 
 TokenAltar turns scattered LLM accounts into a governed shared pool:
