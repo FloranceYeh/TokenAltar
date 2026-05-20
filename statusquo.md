@@ -250,3 +250,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Verified with `pnpm --dir frontend build`, `git diff --check`, and explicit checks that `frontend/public/guides/tokenaltar-project-guide.png` and the built `frontend/dist/guides/tokenaltar-project-guide.png` exist.
+
+## [2026-05-20 17:31] Project Logo Integration
+- **Changes:** Moved the supplied root `logo.png` into `frontend/public/logo.png`, used it in the README header, wired it as the browser favicon and Apple touch icon, updated the app title, and replaced the sidebar TA badge with the logo image.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Verified with `pnpm --dir frontend build`, `git diff --check`, a built `frontend/dist/logo.png`, and Playwright checks for `/logo.png`, document favicon links, and loaded sidebar logo dimensions.

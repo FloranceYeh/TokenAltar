@@ -1277,7 +1277,7 @@ onBeforeUnmount(stopConsoleEventStream)
   <main class="shell" :class="{ 'auth-shell': !user, 'modal-open': apiKeyChannelModalOpen }" :style="consoleBackgroundStyle">
     <aside v-if="user" class="sidebar">
       <div class="brand">
-        <div class="mark"><span>TA</span></div>
+        <img class="mark logo-mark" src="/logo.png" alt="TokenAltar logo" />
         <div>
           <h1>TokenAltar</h1>
           <p>Token-native LLM gateway</p>

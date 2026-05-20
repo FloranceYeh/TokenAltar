@@ -1,5 +1,9 @@
 # TokenAltar
 
+<p align="center">
+  <img src="frontend/public/logo.png" alt="TokenAltar logo" width="132" />
+</p>
+
 ![TokenAltar project guide](frontend/public/guides/tokenaltar-project-guide.png)
 
 **TokenAltar is a self-contained LLM capacity console for small teams, research groups, private circles, and API-sharing communities.**
