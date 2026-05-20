@@ -2365,7 +2365,24 @@ pub struct SettingRecord {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SettingUpdate {
     pub key: String,
+    #[serde(deserialize_with = "deserialize_setting_value")]
     pub value: String,
+}
+
+fn deserialize_setting_value<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(value) => Ok(value),
+        serde_json::Value::Number(value) => Ok(value.to_string()),
+        serde_json::Value::Bool(value) => Ok(value.to_string()),
+        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            Err(serde::de::Error::custom(
+                "setting value must be a string, number, or boolean",
+            ))
+        }
+    }
 }
 
 fn api_key_from_row(row: &sqlx::sqlite::SqliteRow) -> ApiKeyRecord {
@@ -3167,5 +3184,41 @@ fn non_empty_timezone(timezone: &str) -> Option<&str> {
         None
     } else {
         Some(trimmed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SettingUpdate;
+    use serde_json::json;
+
+    #[test]
+    fn setting_update_deserializes_scalar_values_as_strings() {
+        let updates: Vec<SettingUpdate> = serde_json::from_value(json!([
+            { "key": "initial_user_points", "value": 50 },
+            { "key": "surge_idle_multiplier", "value": 0.5 },
+            { "key": "invite_required", "value": true },
+            { "key": "invite_code_default", "value": "TOKENALTAR" }
+        ]))
+        .unwrap();
+
+        assert_eq!(updates[0].value, "50");
+        assert_eq!(updates[1].value, "0.5");
+        assert_eq!(updates[2].value, "true");
+        assert_eq!(updates[3].value, "TOKENALTAR");
+    }
+
+    #[test]
+    fn setting_update_rejects_non_scalar_values() {
+        let error = serde_json::from_value::<Vec<SettingUpdate>>(json!([
+            { "key": "default_channel_windows_json", "value": [] }
+        ]))
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("setting value must be a string, number, or boolean")
+        );
     }
 }

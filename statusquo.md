@@ -274,3 +274,9 @@
 - **Status:** Completed
 - **Next Steps:** Deploy the new migration and rebuilt embedded frontend together so existing token quotas are converted to point quotas before the console uses the new fields.
 - **Context:** Migration `0014_channel_quota_points.sql` converts old token quotas using the active fallback input price per pricing unit, then updates untouched default window JSON to point limits.
+
+## [2026-05-20 20:03] Settings Save Scalar Values
+- **Changes:** Made `/api/settings` accept string, number, and boolean scalar setting values by normalizing them to strings before existing validation, and made the Vue settings form stringify values before submission.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Fixes Axum JSON deserialization failures such as `value: invalid type: integer 50, expected a string` while preserving validation and rejecting non-scalar setting values.

@@ -1138,7 +1138,7 @@ async function saveSettings() {
     method: 'POST',
     body: JSON.stringify(settingsSchema.map((item) => ({
       key: item.key,
-      value: settingsForm[item.key],
+      value: String(settingsForm[item.key] ?? ''),
     }))),
   })
   await loadSettings()
