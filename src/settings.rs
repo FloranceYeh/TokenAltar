@@ -7,7 +7,7 @@ use crate::{
     models::ModelPrice,
 };
 
-pub const DEFAULT_CHANNEL_WINDOWS_JSON: &str = r#"[{"name":"Monthly","limit_tokens":1000000,"period_unit":"month","period_count":1,"timezone":"UTC"},{"name":"Daily","limit_tokens":200000,"period_unit":"day","period_count":1,"timezone":"UTC"},{"name":"Hourly","limit_tokens":50000,"period_unit":"hour","period_count":1,"timezone":"UTC"}]"#;
+pub const DEFAULT_CHANNEL_WINDOWS_JSON: &str = r#"[{"name":"Monthly","limit_points":5,"period_unit":"month","period_count":1,"timezone":"UTC"},{"name":"Daily","limit_points":1,"period_unit":"day","period_count":1,"timezone":"UTC"},{"name":"Hourly","limit_points":0.25,"period_unit":"hour","period_count":1,"timezone":"UTC"}]"#;
 
 pub const SETTING_DEFAULTS: &[(&str, &str)] = &[
     ("invite_required", "false"),
@@ -78,7 +78,7 @@ pub struct RuntimeSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DefaultChannelWindow {
     pub name: String,
-    pub limit_tokens: i64,
+    pub limit_points: f64,
     pub period_unit: String,
     pub period_count: i64,
     pub timezone: String,
@@ -367,9 +367,13 @@ fn validate_default_windows(windows: &[DefaultChannelWindow]) -> AppResult<()> {
                 "default channel window name cannot be empty".to_string(),
             ));
         }
-        if window.limit_tokens <= 0 || window.period_count <= 0 {
+        if window.limit_points <= 0.0
+            || !window.limit_points.is_finite()
+            || window.period_count <= 0
+        {
             return Err(AppError::BadRequest(
-                "default channel window limits and period counts must be positive".to_string(),
+                "default channel window point limits and period counts must be positive"
+                    .to_string(),
             ));
         }
         if !matches!(

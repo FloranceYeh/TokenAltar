@@ -119,7 +119,7 @@ export function primaryWindow(channel: Pick<Channel, 'limits'>) {
 
 export function quotaSummary(channel: Pick<Channel, 'limits'>) {
   return (channel.limits?.windows || [])
-    .map((window) => `${window.name}: ${fmt(window.limit_tokens - window.used_tokens, 0)}`)
+    .map((window) => `${window.name}: ${fmt(window.limit_points - window.used_points, 4)} pts`)
     .join(' / ') || '-'
 }
 

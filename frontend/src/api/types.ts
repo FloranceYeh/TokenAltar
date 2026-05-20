@@ -22,7 +22,7 @@ export type Dashboard = {
   users: number
   channels: number
   enabled_channels: number
-  available_tokens: number
+  available_points: number
   spent_points_today: number
   surge_multiplier: number
   surge_state: string
@@ -82,8 +82,8 @@ export type ChannelHealthSummary = {
 export type ChannelQuotaWindow = {
   id?: number
   name: string
-  limit_tokens: number
-  used_tokens: number
+  limit_points: number
+  used_points: number
   period_unit: string
   period_count: number
   anchor_at: string
@@ -119,7 +119,7 @@ export type Channel = {
 
 export type DefaultChannelWindow = {
   name: string
-  limit_tokens: number
+  limit_points: number
   period_unit: string
   period_count: number
   timezone: string

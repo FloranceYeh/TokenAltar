@@ -23,7 +23,7 @@ pub fn spawn_ledger_worker(
     tokio::spawn(async move {
         info!("ledger worker started");
         while let Some(event) = rx.recv().await {
-            metrics.add_tokens(event.usage.total());
+            metrics.add_points(event.total_points);
             match db.apply_ledger_event(&event).await {
                 Ok(true) => {
                     let consumer_topics = [

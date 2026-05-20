@@ -315,7 +315,7 @@ const allFilteredChannelsSelected = computed(() =>
 )
 const dashboardMetrics = computed(() => [
   { label: 'Surge', value: surgeStateLabel(dashboard.value?.surge_state), detail: `${dashboard.value?.surge_multiplier || 1}x multiplier` },
-  { label: 'Available tokens', value: fmt(dashboard.value?.available_tokens, 0), detail: 'ready for routing' },
+  { label: 'Available points', value: fmt(dashboard.value?.available_points, 4), detail: 'ready for routing' },
   { label: 'Enabled channels', value: `${dashboard.value?.enabled_channels || 0} / ${dashboard.value?.channels || 0}`, detail: 'online capacity' },
   { label: 'Today spend', value: fmt(dashboard.value?.spent_points_today, 4), detail: 'points settled' },
 ])
@@ -1005,7 +1005,7 @@ function defaultAnchor() {
 function cloneWindows(windows: Partial<ChannelQuotaWindow>[]) {
   return windows.map((window) => ({
     name: window.name || 'Window',
-    limit_tokens: Number(window.limit_tokens || 0),
+    limit_points: Number(window.limit_points || 0),
     period_unit: window.period_unit || 'day',
     period_count: Number(window.period_count || 1),
     anchor_at: window.anchor_at || defaultAnchor(),
@@ -1017,7 +1017,7 @@ function addQuotaWindow() {
   const template = runtimeSettings.value.default_channel_windows?.[0]
   channelForm.windows.push({
     name: template?.name || 'Window',
-    limit_tokens: Number(template?.limit_tokens || 1),
+    limit_points: Number(template?.limit_points || 1),
     period_unit: template?.period_unit || 'day',
     period_count: Number(template?.period_count || 1),
     anchor_at: defaultAnchor(),
@@ -1245,7 +1245,7 @@ function channelPayload() {
     enabled: channelForm.enabled,
     windows: channelForm.windows.map((window) => ({
       name: window.name,
-      limit_tokens: Number(window.limit_tokens),
+      limit_points: Number(window.limit_points),
       period_unit: window.period_unit,
       period_count: Number(window.period_count),
       anchor_at: window.anchor_at,
@@ -1715,7 +1715,7 @@ onBeforeUnmount(stopConsoleEventStream)
             </div>
             <div class="quota-window" v-for="(window, index) in channelForm.windows" :key="index">
               <label>Name <input v-model="window.name" /></label>
-              <label>Limit <input v-model.number="window.limit_tokens" type="number" min="1" /></label>
+              <label>Limit Points <input v-model.number="window.limit_points" type="number" min="0.0001" step="0.0001" /></label>
               <label>Every <input v-model.number="window.period_count" type="number" min="1" /></label>
               <label>Unit
                 <select v-model="window.period_unit">
@@ -1758,7 +1758,7 @@ onBeforeUnmount(stopConsoleEventStream)
                   <td v-if="isAdmin" class="muted-cell">{{ ownerLabel(channel) }}</td>
                   <td>{{ channel.provider }}</td>
                   <td><span class="status" :class="statusClass(channel)">{{ channel.status }}</span></td>
-                  <td class="nowrap">{{ primaryWindow(channel) ? fmt(primaryWindow(channel).limit_tokens - primaryWindow(channel).used_tokens, 0) : '-' }}</td>
+                  <td class="nowrap">{{ primaryWindow(channel) ? fmt(primaryWindow(channel).limit_points - primaryWindow(channel).used_points, 4) : '-' }}</td>
                   <td class="wrap-cell">{{ quotaSummary(channel) }}</td>
                   <td class="wrap-cell">{{ channel.models.join(', ') || '*' }}</td>
                   <td class="health-cell">

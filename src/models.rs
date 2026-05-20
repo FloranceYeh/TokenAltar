@@ -139,8 +139,8 @@ pub struct ChannelLimits {
 pub struct ChannelQuotaWindow {
     pub id: i64,
     pub name: String,
-    pub limit_tokens: i64,
-    pub used_tokens: i64,
+    pub limit_points: f64,
+    pub used_points: f64,
     pub period_unit: String,
     pub period_count: i64,
     pub anchor_at: String,

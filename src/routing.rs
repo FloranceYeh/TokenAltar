@@ -114,7 +114,7 @@ async fn filter_healthy<'a>(
                 .limits
                 .windows
                 .iter()
-                .any(|window| window.limit_tokens - window.used_tokens <= 0)
+                .any(|window| window.limit_points - window.used_points <= f64::EPSILON)
         {
             continue;
         }
@@ -143,9 +143,9 @@ fn weighted_choice(
                 .limits
                 .windows
                 .first()
-                .map(|window| window.limit_tokens - window.used_tokens)
+                .map(|window| window.limit_points - window.used_points)
                 .unwrap_or_default();
-            let mut weight = remaining.max(1) as f64;
+            let mut weight = remaining.max(f64::EPSILON);
             if is_fire_sale(channel) {
                 weight *= fire_sale_weight_multiplier;
             }
@@ -191,7 +191,7 @@ mod tests {
                 health_checked_at: None,
                 upstream_latency_ms: None,
                 last_error: None,
-                limits: limits(100),
+                limits: limits(100.0),
             },
             Channel {
                 id: 2,
@@ -206,7 +206,7 @@ mod tests {
                 health_checked_at: None,
                 upstream_latency_ms: None,
                 last_error: None,
-                limits: limits(100),
+                limits: limits(100.0),
             },
         ];
         let decision = choose_channel(&channels, "gpt-test", None, &runtime, 5.0)
@@ -215,13 +215,13 @@ mod tests {
         assert_eq!(decision.channel.id, 2);
     }
 
-    fn limits(remaining: i64) -> ChannelLimits {
+    fn limits(remaining: f64) -> ChannelLimits {
         ChannelLimits {
             windows: vec![ChannelQuotaWindow {
                 id: 1,
                 name: "Primary".to_string(),
-                limit_tokens: remaining,
-                used_tokens: 0,
+                limit_points: remaining,
+                used_points: 0.0,
                 period_unit: "month".to_string(),
                 period_count: 1,
                 anchor_at: "2026-05-01T00:00:00".to_string(),

@@ -164,7 +164,7 @@ async fn openai_responses_gateway_settles_ledger_and_limits() {
     assert_eq!(ledger[0]["input_tokens"], 12);
     assert_eq!(ledger[0]["output_tokens"], 4);
     let channel = state.db.get_channel(1).await.unwrap();
-    assert_eq!(channel.limits.windows[0].used_tokens, 16);
+    assert_approx_eq(channel.limits.windows[0].used_points, 0.0001);
 }
 
 #[tokio::test]
@@ -265,7 +265,7 @@ async fn exhausted_channel_is_marked_unavailable() {
     }))
     .await;
     let (state, token) = setup_state(upstream).await;
-    sqlx::query("UPDATE channel_quota_windows SET used_tokens = limit_tokens WHERE channel_id = 1")
+    sqlx::query("UPDATE channel_quota_windows SET used_points = limit_points WHERE channel_id = 1")
         .execute(&state.db.pool)
         .await
         .unwrap();
@@ -737,10 +737,10 @@ async fn affinity_429_retries_backup_channel_and_switches_binding() {
             .unwrap()
             .limits
             .windows[0]
-            .used_tokens,
-        0
+            .used_points,
+        0.0
     );
-    assert_eq!(
+    assert_approx_eq(
         state
             .db
             .get_channel(backup_channel_id)
@@ -748,8 +748,8 @@ async fn affinity_429_retries_backup_channel_and_switches_binding() {
             .unwrap()
             .limits
             .windows[0]
-            .used_tokens,
-        16
+            .used_points,
+        0.0001,
     );
     let (binding_channel_id, _) = state
         .db
@@ -820,8 +820,8 @@ async fn semantic_empty_response_retries_backup_channel() {
     assert_eq!(ledger.len(), 1);
     assert_eq!(ledger[0]["channel_id"], backup_channel_id);
     assert_eq!(
-        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
-        0
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_points,
+        0.0
     );
     let user = state
         .db
@@ -891,8 +891,8 @@ async fn semantic_empty_stream_retries_backup_before_client_done() {
     assert_eq!(ledger[0]["input_tokens"], 8);
     assert_eq!(ledger[0]["output_tokens"], 4);
     assert_eq!(
-        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
-        0
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_points,
+        0.0
     );
 }
 
@@ -917,8 +917,8 @@ async fn affinity_skip_retry_on_failure_returns_bound_channel_error() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(state.db.list_ledger(None).await.unwrap().is_empty());
     assert_eq!(
-        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
-        0
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_points,
+        0.0
     );
     assert_eq!(
         state
@@ -928,8 +928,8 @@ async fn affinity_skip_retry_on_failure_returns_bound_channel_error() {
             .unwrap()
             .limits
             .windows[0]
-            .used_tokens,
-        0
+            .used_points,
+        0.0
     );
     let (binding_channel_id, _) = state
         .db
@@ -1078,7 +1078,7 @@ fn quota_windows() -> Vec<ChannelQuotaWindowInput> {
     vec![
         ChannelQuotaWindowInput {
             name: "Monthly".to_string(),
-            limit_tokens: 1000,
+            limit_points: 1000.0,
             period_unit: "month".to_string(),
             period_count: 1,
             anchor_at: "2026-05-01T00:00:00".to_string(),
@@ -1086,13 +1086,20 @@ fn quota_windows() -> Vec<ChannelQuotaWindowInput> {
         },
         ChannelQuotaWindowInput {
             name: "Daily".to_string(),
-            limit_tokens: 1000,
+            limit_points: 1000.0,
             period_unit: "day".to_string(),
             period_count: 1,
             anchor_at: "2026-05-18T00:00:00".to_string(),
             timezone: "UTC".to_string(),
         },
     ]
+}
+
+fn assert_approx_eq(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < 1e-9,
+        "expected {expected}, got {actual}"
+    );
 }
 
 fn test_config(database_url: &str) -> Config {

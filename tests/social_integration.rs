@@ -215,7 +215,7 @@ async fn users_create_channels_and_list_only_their_masked_channels() {
                 api_key_secret: "bob-secret".to_string(),
                 models: vec!["gpt-bob".to_string()],
                 enabled: true,
-                windows: quota_windows(1000),
+                windows: quota_windows(1000.0),
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,
@@ -241,7 +241,7 @@ async fn users_create_channels_and_list_only_their_masked_channels() {
                         "api_key_secret": "alice-secret",
                         "models": ["gpt-alice"],
                         "enabled": true,
-                        "windows": quota_windows_json(1000),
+                        "windows": quota_windows_json(1000.0),
                         "fire_sale_days_before": 3,
                         "fire_sale_remaining_pct": 0.25,
                         "fire_sale_discount": 0.2
@@ -367,7 +367,7 @@ async fn admin_manages_users_and_disabled_accounts_cannot_authenticate() {
                 api_key_secret: "managed-secret".to_string(),
                 models: vec!["*".to_string()],
                 enabled: true,
-                windows: quota_windows(1000),
+                windows: quota_windows(1000.0),
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,
@@ -538,8 +538,8 @@ async fn gateway_reservation_can_be_released_without_leaking_usage() {
         2.5
     );
     assert_eq!(
-        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
-        25
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_points,
+        2.5
     );
 
     state
@@ -556,8 +556,8 @@ async fn gateway_reservation_can_be_released_without_leaking_usage() {
         0.0
     );
     assert_eq!(
-        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
-        0
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_points,
+        0.0
     );
 }
 
@@ -588,7 +588,7 @@ async fn gateway_reservation_enforces_every_quota_window() {
                 windows: vec![
                     ChannelQuotaWindowInput {
                         name: "Quarter".to_string(),
-                        limit_tokens: 1000,
+                        limit_points: 1000.0,
                         period_unit: "month".to_string(),
                         period_count: 3,
                         anchor_at: "2026-01-01T00:00:00".to_string(),
@@ -596,7 +596,7 @@ async fn gateway_reservation_enforces_every_quota_window() {
                     },
                     ChannelQuotaWindowInput {
                         name: "Minute burst".to_string(),
-                        limit_tokens: 5,
+                        limit_points: 0.5,
                         period_unit: "minute".to_string(),
                         period_count: 15,
                         anchor_at: "2026-05-18T00:00:00".to_string(),
@@ -617,8 +617,8 @@ async fn gateway_reservation_enforces_every_quota_window() {
         .await;
     assert!(rejected.is_err());
     let after = state.db.get_channel(channel.id).await.unwrap();
-    assert_eq!(after.limits.windows[0].used_tokens, 0);
-    assert_eq!(after.limits.windows[1].used_tokens, 0);
+    assert_eq!(after.limits.windows[0].used_points, 0.0);
+    assert_eq!(after.limits.windows[1].used_points, 0.0);
 }
 
 #[tokio::test]
@@ -699,8 +699,8 @@ async fn ledger_settlement_applies_only_reservation_delta() {
         1.5
     );
     assert_eq!(
-        state.db.get_channel(1).await.unwrap().limits.windows[0].used_tokens,
-        12
+        state.db.get_channel(1).await.unwrap().limits.windows[0].used_points,
+        1.5
     );
 }
 
@@ -893,7 +893,7 @@ async fn api_key_channel_selection_controls_route_pool() {
                 api_key_secret: "route-secret".to_string(),
                 models: vec!["gpt-selected".to_string()],
                 enabled: true,
-                windows: quota_windows(1000),
+                windows: quota_windows(1000.0),
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,
@@ -968,7 +968,7 @@ async fn channel_management_updates_copies_batches_and_soft_deletes() {
                 api_key_secret: "old-secret".to_string(),
                 models: vec!["gpt-old".to_string()],
                 enabled: true,
-                windows: quota_windows(1000),
+                windows: quota_windows(1000.0),
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,
@@ -994,7 +994,7 @@ async fn channel_management_updates_copies_batches_and_soft_deletes() {
                         "api_key_secret": "",
                         "models": ["claude-3*"],
                         "enabled": true,
-                        "windows": quota_windows_json(2000),
+                        "windows": quota_windows_json(2000.0),
                         "fire_sale_days_before": 4,
                         "fire_sale_remaining_pct": 0.5,
                         "fire_sale_discount": 0.3,
@@ -1162,7 +1162,7 @@ async fn console_events_push_channel_topic_invalidations() {
                         "api_key_secret": "live-secret",
                         "models": ["gpt-live"],
                         "enabled": true,
-                        "windows": quota_windows_json(1500),
+                        "windows": quota_windows_json(1500.0),
                         "fire_sale_days_before": 3,
                         "fire_sale_remaining_pct": 0.25,
                         "fire_sale_discount": 0.2
@@ -1217,7 +1217,7 @@ async fn setup_state() -> AppState {
                 api_key_secret: "test".to_string(),
                 models: vec!["*".to_string()],
                 enabled: true,
-                windows: quota_windows(1000),
+                windows: quota_windows(1000.0),
                 fire_sale_days_before: 3,
                 fire_sale_remaining_pct: 0.25,
                 fire_sale_discount: 0.2,
@@ -1242,11 +1242,11 @@ fn token_hash(token: &str) -> String {
     tokenaltar::auth::hash_token(token)
 }
 
-fn quota_windows(limit_tokens: i64) -> Vec<ChannelQuotaWindowInput> {
+fn quota_windows(limit_points: f64) -> Vec<ChannelQuotaWindowInput> {
     vec![
         ChannelQuotaWindowInput {
             name: "Monthly".to_string(),
-            limit_tokens,
+            limit_points,
             period_unit: "month".to_string(),
             period_count: 1,
             anchor_at: "2026-05-01T00:00:00".to_string(),
@@ -1254,7 +1254,7 @@ fn quota_windows(limit_tokens: i64) -> Vec<ChannelQuotaWindowInput> {
         },
         ChannelQuotaWindowInput {
             name: "Daily".to_string(),
-            limit_tokens,
+            limit_points,
             period_unit: "day".to_string(),
             period_count: 1,
             anchor_at: "2026-05-18T00:00:00".to_string(),
@@ -1263,11 +1263,11 @@ fn quota_windows(limit_tokens: i64) -> Vec<ChannelQuotaWindowInput> {
     ]
 }
 
-fn quota_windows_json(limit_tokens: i64) -> Value {
+fn quota_windows_json(limit_points: f64) -> Value {
     json!([
         {
             "name": "Monthly",
-            "limit_tokens": limit_tokens,
+            "limit_points": limit_points,
             "period_unit": "month",
             "period_count": 1,
             "anchor_at": "2026-05-01T00:00:00",
@@ -1275,7 +1275,7 @@ fn quota_windows_json(limit_tokens: i64) -> Value {
         },
         {
             "name": "Daily",
-            "limit_tokens": limit_tokens,
+            "limit_points": limit_points,
             "period_unit": "day",
             "period_count": 1,
             "anchor_at": "2026-05-18T00:00:00",

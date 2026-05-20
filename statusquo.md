@@ -268,3 +268,9 @@
 - **Status:** Completed
 - **Next Steps:** Configure production admin credentials before first container startup and confirm repository package write permissions if GHCR push fails.
 - **Context:** The container build still runs the Vue build before Rust compilation so `frontend/dist` is embedded into the release binary; runtime SQLite data is expected at `/data/tokenaltar.sqlite3`.
+
+## [2026-05-20 19:19] Channel Quota Points
+- **Changes:** Migrated channel quota windows from token counters to point counters, updated gateway reservation/settlement/routing/surge logic to use point capacity, refreshed console/API field names, and documented the `limit_points` / `used_points` payload.
+- **Status:** Completed
+- **Next Steps:** Deploy the new migration and rebuilt embedded frontend together so existing token quotas are converted to point quotas before the console uses the new fields.
+- **Context:** Migration `0014_channel_quota_points.sql` converts old token quotas using the active fallback input price per pricing unit, then updates untouched default window JSON to point limits.

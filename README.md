@@ -45,7 +45,7 @@ The gateway estimates input usage before forwarding a request, reserves local po
 
 | Page | Purpose |
 | --- | --- |
-| Dashboard | Live capacity, surge state, available tokens, enabled channels, and current point spend. |
+| Dashboard | Live capacity, surge state, available points, enabled channels, and current point spend. |
 | Users | Admin-only account management, roles, balances, password resets, and account suspension. |
 | API Keys | Client credentials, model fences, spend ceilings, channel allow-lists, rotation, and soft deletion. |
 | Channels | Upstream providers, model coverage, quota windows, fire-sale economics, cloning, testing, and batch enable/disable. |
@@ -94,9 +94,9 @@ These presets use a 3600-second TTL, enable successful fallback switching, and k
 
 ## Capacity, Pricing, And Settlement
 
-Channels can define arbitrary quota windows. Each window has a token limit, period unit/count, anchor timestamp, and IANA timezone. Every configured window is enforced. If any configured window is exhausted, the channel stops routing until the relevant window refreshes.
+Channels can define arbitrary quota windows. Each window has a point limit, period unit/count, anchor timestamp, and IANA timezone. Every configured window is enforced. If any configured window is exhausted, the channel stops routing until the relevant window refreshes.
 
-The first quota window is the primary inventory window used for dashboard availability, route weighting, surge normalization, and fire-sale reset timing.
+The first quota window is the primary inventory window used for dashboard availability, route weighting, surge normalization, and fire-sale reset timing. API and Settings payloads use `limit_points` / `used_points` for quota windows.
 
 Prices are stored per **1M tokens** and split into input, output, and cache-token rates. Price resolution is:
 

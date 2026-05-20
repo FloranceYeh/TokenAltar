@@ -236,7 +236,7 @@ async fn handle_gateway(
         let attempt_surge_multiplier = surge_multiplier_from_channels(
             &settings,
             &channels,
-            state.metrics.tokens_last_hour(),
+            state.metrics.points_last_hour(),
             Utc::now(),
         )
         .0;
@@ -394,7 +394,7 @@ fn is_retryable_reservation_error(err: &AppError) -> bool {
     matches!(
         err,
         AppError::BadRequest(message)
-            if message == "channel token quota no longer has enough room for the estimate"
+            if message == "channel point quota no longer has enough room for the estimate"
     )
 }
 
@@ -1061,7 +1061,7 @@ pub async fn surge_multiplier(state: &AppState) -> (f64, &'static str) {
     surge_multiplier_from_channels(
         &settings,
         &channels,
-        state.metrics.tokens_last_hour(),
+        state.metrics.points_last_hour(),
         Utc::now(),
     )
 }
@@ -1069,7 +1069,7 @@ pub async fn surge_multiplier(state: &AppState) -> (f64, &'static str) {
 fn surge_multiplier_from_channels(
     settings: &RuntimeSettings,
     channels: &[Channel],
-    tokens_last_hour: i64,
+    points_last_hour: f64,
     now: DateTime<Utc>,
 ) -> (f64, &'static str) {
     let hourly_capacity: f64 = channels
@@ -1080,7 +1080,7 @@ fn surge_multiplier_from_channels(
                 .limits
                 .windows
                 .first()
-                .and_then(|window| primary_window_remaining_tokens_per_hour(window, now))
+                .and_then(|window| primary_window_remaining_points_per_hour(window, now))
         })
         .sum();
     if hourly_capacity <= f64::EPSILON {
@@ -1088,8 +1088,8 @@ fn surge_multiplier_from_channels(
     }
 
     // Compare one-hour demand to a one-hour supply rate. Raw remaining inventory is not a
-    // time-compatible denominator for the rolling one-hour token window.
-    let ratio = tokens_last_hour as f64 / hourly_capacity;
+    // time-compatible denominator for the rolling one-hour point window.
+    let ratio = points_last_hour / hourly_capacity;
     if ratio < settings.surge_low_threshold {
         (settings.surge_idle_multiplier, "idle")
     } else if ratio > settings.surge_high_threshold {
@@ -1099,12 +1099,12 @@ fn surge_multiplier_from_channels(
     }
 }
 
-fn primary_window_remaining_tokens_per_hour(
+fn primary_window_remaining_points_per_hour(
     window: &ChannelQuotaWindow,
     now: DateTime<Utc>,
 ) -> Option<f64> {
-    let remaining_tokens = window.limit_tokens - window.used_tokens;
-    if remaining_tokens <= 0 {
+    let remaining_points = window.limit_points - window.used_points;
+    if remaining_points <= 0.0 {
         return None;
     }
     let end_at = DateTime::parse_from_rfc3339(&window.current_window_end_at)
@@ -1114,7 +1114,7 @@ fn primary_window_remaining_tokens_per_hour(
     if remaining_seconds <= 0 {
         return None;
     }
-    Some(remaining_tokens as f64 * SECONDS_PER_HOUR / remaining_seconds as f64)
+    Some(remaining_points * SECONDS_PER_HOUR / remaining_seconds as f64)
 }
 
 fn normalized_usage(request: &crate::protocol::TextRequest, usage: Usage) -> Usage {
@@ -1160,7 +1160,7 @@ mod tests {
     }
 
     fn healthy_channel_with_primary_window(
-        remaining_tokens: i64,
+        remaining_points: f64,
         window_seconds_left: i64,
     ) -> Channel {
         let now = Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap();
@@ -1181,8 +1181,8 @@ mod tests {
                 windows: vec![ChannelQuotaWindow {
                     id: 1,
                     name: "Minute".to_string(),
-                    limit_tokens: 1_000,
-                    used_tokens: 1_000 - remaining_tokens,
+                    limit_points: 1_000.0,
+                    used_points: 1_000.0 - remaining_points,
                     period_unit: "minute".to_string(),
                     period_count: 1,
                     anchor_at: "2026-05-19T12:00:00Z".to_string(),
@@ -1203,9 +1203,9 @@ mod tests {
     fn surge_uses_hourly_capacity_not_raw_remaining_inventory() {
         let settings = default_settings();
         let now = Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap();
-        let channel = healthy_channel_with_primary_window(10, 60);
+        let channel = healthy_channel_with_primary_window(10.0, 60);
 
-        let (multiplier, state) = surge_multiplier_from_channels(&settings, &[channel], 100, now);
+        let (multiplier, state) = surge_multiplier_from_channels(&settings, &[channel], 100.0, now);
 
         assert_eq!(state, "idle");
         assert_eq!(multiplier, settings.surge_idle_multiplier);
@@ -1216,7 +1216,7 @@ mod tests {
         let settings = default_settings();
         let now = Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap();
 
-        let (multiplier, state) = surge_multiplier_from_channels(&settings, &[], 0, now);
+        let (multiplier, state) = surge_multiplier_from_channels(&settings, &[], 0.0, now);
 
         assert_eq!(state, "no_capacity");
         assert_eq!(multiplier, settings.surge_normal_multiplier);

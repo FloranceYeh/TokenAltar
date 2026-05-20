@@ -72,7 +72,7 @@ pub struct DashboardSummary {
     pub users: i64,
     pub channels: i64,
     pub enabled_channels: i64,
-    pub available_tokens: i64,
+    pub available_points: f64,
     pub spent_points_today: f64,
     pub surge_multiplier: f64,
     pub surge_state: String,
@@ -905,11 +905,11 @@ impl Database {
             SELECT COUNT(*)
             FROM channel_quota_windows
             WHERE channel_id = ?
-              AND used_tokens + ? <= limit_tokens
+              AND used_points + ? <= limit_points
             "#,
         )
         .bind(channel_id)
-        .bind(tokens)
+        .bind(points)
         .fetch_one(&mut *tx)
         .await?;
         let expected_window_count: (i64,) =
@@ -919,17 +919,17 @@ impl Database {
                 .await?;
         if expected_window_count.0 == 0 || quota_window_count.0 != expected_window_count.0 {
             return Err(AppError::BadRequest(
-                "channel token quota no longer has enough room for the estimate".to_string(),
+                "channel point quota no longer has enough room for the estimate".to_string(),
             ));
         }
         sqlx::query(
             r#"
             UPDATE channel_quota_windows
-            SET used_tokens = used_tokens + ?, updated_at = datetime('now')
+            SET used_points = used_points + ?, updated_at = datetime('now')
             WHERE channel_id = ?
             "#,
         )
-        .bind(tokens)
+        .bind(points)
         .bind(channel_id)
         .execute(&mut *tx)
         .await?;
@@ -962,11 +962,11 @@ impl Database {
         sqlx::query(
             r#"
             UPDATE channel_quota_windows
-            SET used_tokens = MAX(0, used_tokens - ?), updated_at = datetime('now')
+            SET used_points = MAX(0.0, used_points - ?), updated_at = datetime('now')
             WHERE channel_id = ?
             "#,
         )
-        .bind(reservation.tokens)
+        .bind(reservation.points)
         .bind(reservation.channel_id)
         .execute(&mut *tx)
         .await?;
@@ -1021,7 +1021,7 @@ impl Database {
     async fn windows_by_channel(&self) -> AppResult<HashMap<i64, Vec<ChannelQuotaWindow>>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, channel_id, name, limit_tokens, used_tokens, period_unit, period_count,
+            SELECT id, channel_id, name, limit_points, used_points, period_unit, period_count,
                    anchor_at, timezone, current_window_start_at, current_window_end_at, sort_order
             FROM channel_quota_windows
             ORDER BY channel_id, sort_order, id
@@ -1037,8 +1037,8 @@ impl Database {
                 .push(ChannelQuotaWindow {
                     id: row.get("id"),
                     name: row.get("name"),
-                    limit_tokens: row.get("limit_tokens"),
-                    used_tokens: row.get("used_tokens"),
+                    limit_points: row.get("limit_points"),
+                    used_points: row.get("used_points"),
                     period_unit: row.get("period_unit"),
                     period_count: row.get("period_count"),
                     anchor_at: row.get("anchor_at"),
@@ -1430,7 +1430,7 @@ impl Database {
                 .iter()
                 .map(|window| ChannelQuotaWindowInput {
                     name: window.name.clone(),
-                    limit_tokens: window.limit_tokens,
+                    limit_points: window.limit_points,
                     period_unit: window.period_unit.clone(),
                     period_count: window.period_count,
                     anchor_at: window.anchor_at.clone(),
@@ -1447,12 +1447,12 @@ impl Database {
                 sqlx::query(
                     r#"
                     UPDATE channel_quota_windows
-                    SET used_tokens = ?, current_window_start_at = ?, current_window_end_at = ?,
+                    SET used_points = ?, current_window_start_at = ?, current_window_end_at = ?,
                         updated_at = datetime('now')
                     WHERE channel_id = ? AND sort_order = ?
                     "#,
                 )
-                .bind(window.used_tokens)
+                .bind(window.used_points)
                 .bind(&window.current_window_start_at)
                 .bind(&window.current_window_end_at)
                 .bind(clone.id)
@@ -1657,7 +1657,7 @@ impl Database {
             sqlx::query(
                 r#"
                 UPDATE channel_quota_windows
-                SET used_tokens = 0, current_window_start_at = ?, current_window_end_at = ?,
+                SET used_points = 0, current_window_start_at = ?, current_window_end_at = ?,
                     updated_at = datetime('now')
                 WHERE id = ?
                 "#,
@@ -1676,7 +1676,7 @@ impl Database {
                 WHEN enabled = 0 THEN status
                 WHEN EXISTS (
                     SELECT 1 FROM channel_quota_windows
-                    WHERE channel_id = channels.id AND used_tokens >= limit_tokens
+                    WHERE channel_id = channels.id AND used_points >= limit_points
                 ) THEN 'cooling'
                 ELSE 'healthy'
               END,
@@ -1867,15 +1867,15 @@ impl Database {
             .bind(event.api_key_id)
             .execute(&mut *tx)
             .await?;
-        let token_delta = event.usage.total() - event.reservation.tokens;
+        let point_delta = event.total_points - event.reservation.points;
         sqlx::query(
             r#"
             UPDATE channel_quota_windows
-            SET used_tokens = MAX(0, used_tokens + ?), updated_at = datetime('now')
+            SET used_points = MAX(0.0, used_points + ?), updated_at = datetime('now')
             WHERE channel_id = ?
             "#,
         )
-        .bind(token_delta)
+        .bind(point_delta)
         .bind(event.channel_id)
         .execute(&mut *tx)
         .await?;
@@ -1934,9 +1934,9 @@ impl Database {
         )
         .fetch_one(&self.pool)
         .await?;
-        let available_tokens: (i64,) = sqlx::query_as(
+        let available_points: (f64,) = sqlx::query_as(
             r#"
-            SELECT COALESCE(SUM(w.limit_tokens - w.used_tokens), 0)
+            SELECT COALESCE(SUM(w.limit_points - w.used_points), 0.0)
             FROM channel_quota_windows w
             JOIN channels c ON c.id = w.channel_id
             WHERE c.deleted_at IS NULL
@@ -1958,7 +1958,7 @@ impl Database {
             users: users.0,
             channels: channels.0,
             enabled_channels: enabled_channels.0,
-            available_tokens: available_tokens.0,
+            available_points: available_points.0,
             spent_points_today: spent_points_today.0,
             surge_multiplier,
             surge_state: surge_state.to_string(),
@@ -2321,7 +2321,7 @@ pub struct ChannelUpdateInput {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ChannelQuotaWindowInput {
     pub name: String,
-    pub limit_tokens: i64,
+    pub limit_points: f64,
     pub period_unit: String,
     pub period_count: i64,
     pub anchor_at: String,
@@ -2842,9 +2842,12 @@ fn validate_quota_windows(windows: &[ChannelQuotaWindowInput]) -> AppResult<()> 
                 "quota window name must be 1-80 characters".to_string(),
             ));
         }
-        if window.limit_tokens <= 0 || window.period_count <= 0 {
+        if window.limit_points <= 0.0
+            || !window.limit_points.is_finite()
+            || window.period_count <= 0
+        {
             return Err(AppError::BadRequest(
-                "quota window limit and period count must be positive".to_string(),
+                "quota window point limit and period count must be positive".to_string(),
             ));
         }
         let definition = QuotaWindowDefinition {
@@ -2898,14 +2901,14 @@ async fn upsert_quota_windows(
         sqlx::query(
             r#"
             INSERT INTO channel_quota_windows(
-              channel_id, name, limit_tokens, used_tokens, period_unit, period_count,
+              channel_id, name, limit_points, used_points, period_unit, period_count,
               anchor_at, timezone, current_window_start_at, current_window_end_at, sort_order
-            ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(channel_id)
         .bind(window.name.trim())
-        .bind(window.limit_tokens)
+        .bind(window.limit_points)
         .bind(&definition.period_unit)
         .bind(definition.period_count)
         .bind(&definition.anchor_at)

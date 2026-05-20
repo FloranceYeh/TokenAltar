@@ -103,11 +103,11 @@ fn is_fire_sale_at(channel: &Channel, now: DateTime<Utc>) -> bool {
     let Some(primary_window) = channel.limits.windows.first() else {
         return false;
     };
-    let remaining = primary_window.limit_tokens - primary_window.used_tokens;
-    if primary_window.limit_tokens <= 0 || channel.limits.fire_sale_days_before <= 0 {
+    let remaining = primary_window.limit_points - primary_window.used_points;
+    if primary_window.limit_points <= 0.0 || channel.limits.fire_sale_days_before <= 0 {
         return false;
     }
-    let remaining_pct = remaining as f64 / primary_window.limit_tokens as f64;
+    let remaining_pct = remaining / primary_window.limit_points;
     remaining_pct > channel.limits.fire_sale_remaining_pct
         && DateTime::parse_from_rfc3339(&primary_window.current_window_end_at)
             .map(|reset_at| reset_at.with_timezone(&Utc))
@@ -203,7 +203,7 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 5, 28, 0, 0, 0).unwrap()
         ));
 
-        channel.limits.windows[0].used_tokens = 800;
+        channel.limits.windows[0].used_points = 800.0;
         assert!(!is_fire_sale_at(
             &channel,
             Utc.with_ymd_and_hms(2026, 5, 26, 12, 0, 0).unwrap()
@@ -228,8 +228,8 @@ mod tests {
                 windows: vec![crate::models::ChannelQuotaWindow {
                     id: 1,
                     name: "Monthly".to_string(),
-                    limit_tokens: 1000,
-                    used_tokens: 100,
+                    limit_points: 1000.0,
+                    used_points: 100.0,
                     period_unit: "month".to_string(),
                     period_count: 1,
                     anchor_at: "2026-05-01T00:00:00".to_string(),
