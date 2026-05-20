@@ -1113,10 +1113,13 @@ impl Database {
         let rows = if user.role == "admin" {
             sqlx::query(
                 r#"
-                SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
+                SELECT c.id, c.owner_user_id, u.display_name AS owner_display_name,
+                       c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                        c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
                        l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
-                FROM channels c JOIN channel_limits l ON c.id = l.channel_id
+                FROM channels c
+                JOIN users u ON u.id = c.owner_user_id
+                JOIN channel_limits l ON c.id = l.channel_id
                 WHERE c.deleted_at IS NULL
                 ORDER BY c.id DESC
                 "#,
@@ -1126,10 +1129,13 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
+                SELECT c.id, c.owner_user_id, u.display_name AS owner_display_name,
+                       c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                        c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
                        l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
-                FROM channels c JOIN channel_limits l ON c.id = l.channel_id
+                FROM channels c
+                JOIN users u ON u.id = c.owner_user_id
+                JOIN channel_limits l ON c.id = l.channel_id
                 WHERE c.owner_user_id = ? AND c.deleted_at IS NULL
                 ORDER BY c.id DESC
                 "#,
@@ -1141,8 +1147,7 @@ impl Database {
         let windows = self.windows_by_channel().await?;
         let mut channels = rows
             .iter()
-            .map(|row| channel_from_row(row, &windows))
-            .map(|result| result.map(PublicChannel::from))
+            .map(|row| public_channel_from_row(row, &windows))
             .collect::<AppResult<Vec<_>>>()?;
         self.attach_channel_health_windows(&mut channels).await?;
         Ok(channels)
@@ -1151,10 +1156,13 @@ impl Database {
     pub async fn list_public_route_channels(&self) -> AppResult<Vec<PublicChannel>> {
         let rows = sqlx::query(
             r#"
-            SELECT c.id, c.owner_user_id, c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
+            SELECT c.id, c.owner_user_id, u.display_name AS owner_display_name,
+                   c.name, c.provider, c.base_url, c.api_key_secret, c.models_json,
                    c.enabled, c.status, c.health_checked_at, c.upstream_latency_ms, c.last_error,
                    l.fire_sale_days_before, l.fire_sale_remaining_pct, l.fire_sale_discount, l.provider_share
-            FROM channels c JOIN channel_limits l ON c.id = l.channel_id
+            FROM channels c
+            JOIN users u ON u.id = c.owner_user_id
+            JOIN channel_limits l ON c.id = l.channel_id
             WHERE c.deleted_at IS NULL
             ORDER BY c.id DESC
             "#,
@@ -1164,8 +1172,7 @@ impl Database {
         let windows = self.windows_by_channel().await?;
         let mut channels = rows
             .iter()
-            .map(|row| channel_from_row(row, &windows))
-            .map(|result| result.map(PublicChannel::from))
+            .map(|row| public_channel_from_row(row, &windows))
             .collect::<AppResult<Vec<_>>>()?;
         self.attach_channel_health_windows(&mut channels).await?;
         Ok(channels)
@@ -2431,6 +2438,15 @@ fn channel_from_row(
             provider_share: row.get("provider_share"),
         },
     })
+}
+
+fn public_channel_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+    windows_by_channel: &HashMap<i64, Vec<ChannelQuotaWindow>>,
+) -> AppResult<PublicChannel> {
+    let mut channel = PublicChannel::from(channel_from_row(row, windows_by_channel)?);
+    channel.owner_display_name = row.try_get("owner_display_name").ok();
+    Ok(channel)
 }
 
 struct ChannelHealthAccumulator {

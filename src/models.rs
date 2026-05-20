@@ -79,6 +79,7 @@ pub struct Channel {
 pub struct PublicChannel {
     pub id: i64,
     pub owner_user_id: i64,
+    pub owner_display_name: Option<String>,
     pub name: String,
     pub provider: ProviderKind,
     pub base_url: String,
@@ -97,6 +98,7 @@ impl From<Channel> for PublicChannel {
         Self {
             id: channel.id,
             owner_user_id: channel.owner_user_id,
+            owner_display_name: None,
             name: channel.name,
             provider: channel.provider,
             base_url: channel.base_url,

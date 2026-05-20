@@ -58,7 +58,7 @@ The console prevents removing the last enabled admin or disabling the current ad
 API keys are managed from the console and through `/api/api-keys`.
 Each key supports enable/disable, soft deletion, one-time rotation, optional expiration, a cumulative point spend limit, and an optional model allow-list.
 Model allow-lists accept exact model names and prefix wildcards such as `gpt-4o*`; empty allow-lists allow every model.
-Each key also stores an explicit channel allow-list. The console exposes a two-column channel picker backed by `/api/route-channels`; selected channels are enforced during gateway routing, while channel secrets remain redacted.
+Each key also stores an explicit channel allow-list. The console exposes a two-column channel picker backed by `/api/route-channels`; selected channels are enforced during gateway routing, and channel option responses include the provider user's display name while channel secrets remain redacted.
 New keys default to every current route channel, and keys that still cover the full route pool are automatically granted newly created channels.
 Deleted keys are hidden and unusable, but ledger history remains intact.
 
@@ -68,7 +68,7 @@ Each quota window defines a token limit, period unit/count, anchor timestamp, an
 When editing an existing channel, an empty `api_key_secret` keeps the stored upstream secret.
 The console also exposes channel clone, health test, per-row enable/disable, batch enable/disable, and soft delete operations.
 Channel health is passive by default: real gateway attempts append health events for `available`, `empty`, `degraded`, and `down` outcomes while manual health tests remain an explicit operator action.
-The channel list returns 48 fixed 30-minute health windows; each window averages TTFT from successful non-empty events only, excludes failed or empty events from the TTFT average, and renders windows with no records as gray.
+The channel list returns the provider user's display name plus 48 fixed 30-minute health windows; each window averages TTFT from successful non-empty events only, excludes failed or empty events from the TTFT average, and renders windows with no records as gray.
 The console has a dedicated Health page that shows all visible channels, labels each provider, and summarizes request-derived samples, empty replies, down windows, and TTFT alongside the 48-window strip.
 
 Runtime settings are managed from `/api/settings`, with the current typed view available at `/api/runtime-settings`.

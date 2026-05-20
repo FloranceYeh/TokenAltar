@@ -417,7 +417,7 @@ const filteredChannels = computed(() => {
       channel.provider,
       channel.status,
       channel.base_url,
-      isAdmin.value ? ownerLabel(channel) : '',
+      ownerLabel(channel),
       ...(channel.models || []),
     ].join(' ').toLowerCase()
     return haystack.includes(needle)
@@ -435,7 +435,7 @@ const filteredHealthChannels = computed(() => {
       channel.status,
       channel.enabled ? 'enabled' : 'disabled',
       channel.base_url,
-      isAdmin.value ? ownerLabel(channel) : '',
+      ownerLabel(channel),
       summary.label,
       summary.detail,
       totals.avgTtftMs === null ? 'ttft n/a' : `ttft ${fmt(totals.avgTtftMs, 0)}ms`,
@@ -940,7 +940,7 @@ function channelSearchText(channel: any) {
     channel.status,
     channel.enabled ? 'enabled' : 'disabled',
     channel.base_url,
-    isAdmin.value ? ownerLabel(channel) : '',
+    ownerLabel(channel),
     healthSummary(channel).label,
     quotaSummary(channel),
     totals.avgTtftMs === null ? 'ttft n/a' : `ttft ${fmt(totals.avgTtftMs, 0)}ms`,
@@ -1045,6 +1045,7 @@ function apiKeyChannelNames(ids: unknown[]) {
 function channelCardTitle(channel: any) {
   return [
     channel.name,
+    ownerLabel(channel),
     channel.provider,
     channel.models?.join(', ') || '*',
     healthSummary(channel).detail,
@@ -1249,6 +1250,7 @@ function isGlobalPrice(price: any) {
 }
 
 function ownerLabel(record: any) {
+  if (record?.owner_display_name) return record.owner_display_name
   return record?.owner_user_id ? `User #${record.owner_user_id}` : '-'
 }
 
@@ -1744,7 +1746,7 @@ onBeforeUnmount(stopConsoleEventStream)
                     <span class="provider-badge" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
                   </div>
                   <div class="channel-subtitle">
-                    <span v-if="isAdmin">{{ ownerLabel(channel) }}</span>
+                    <span>{{ ownerLabel(channel) }}</span>
                     <span>{{ channel.models.join(', ') || '*' }}</span>
                   </div>
                 </div>
@@ -1919,6 +1921,7 @@ onBeforeUnmount(stopConsoleEventStream)
                         <div class="channel-select-meta">
                           <span class="provider-badge compact" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
                           <span class="status" :class="statusClass(channel)">{{ channel.enabled ? channel.status : 'disabled' }}</span>
+                          <span class="channel-select-owner">{{ ownerLabel(channel) }}</span>
                           <span class="channel-select-models">{{ (channel.models || []).join(', ') || '*' }}</span>
                         </div>
                         <div class="mini-health-strip compact" :aria-label="`Health ${healthSummary(channel).label}`">
@@ -1961,6 +1964,7 @@ onBeforeUnmount(stopConsoleEventStream)
                         <div class="channel-select-meta">
                           <span class="provider-badge compact" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
                           <span class="status" :class="statusClass(channel)">{{ channel.enabled ? channel.status : 'disabled' }}</span>
+                          <span class="channel-select-owner">{{ ownerLabel(channel) }}</span>
                           <span class="channel-select-models">{{ (channel.models || []).join(', ') || '*' }}</span>
                         </div>
                         <div class="mini-health-strip compact" :aria-label="`Health ${healthSummary(channel).label}`">

@@ -1671,6 +1671,7 @@ caption {
   white-space: nowrap;
 }
 
+.channel-select-owner,
 .channel-select-models {
   min-width: 0;
   color: var(--ink-muted);
@@ -1691,6 +1692,13 @@ caption {
   padding: 0 4px;
   font-size: 0.58rem;
   line-height: 1.25;
+  white-space: nowrap;
+}
+
+.channel-select-owner {
+  flex: 0 1 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

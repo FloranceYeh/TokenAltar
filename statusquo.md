@@ -214,3 +214,9 @@
 - **Status:** Completed
 - **Next Steps:** None.
 - **Context:** Verified with `pnpm --dir frontend build` and Playwright against a temporary local backend; cards now measure about 51px high with the health strip retained.
+
+## [2026-05-20 13:32] Channel Owner Display Names
+- **Changes:** Added `owner_display_name` to public channel responses, surfaced provider user names in the Health page and API key channel picker, and documented the response field in `README.md`.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Verified with `cargo test`, `pnpm --dir frontend build`, and Playwright against a temporary local backend with a non-admin-owned channel.
