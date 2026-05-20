@@ -187,6 +187,7 @@ pub struct AffinityRule {
     pub ttl_seconds: i64,
     pub skip_retry_on_failure: bool,
     pub switch_on_success: bool,
+    pub include_model_name: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

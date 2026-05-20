@@ -18,6 +18,59 @@ use tokenaltar::{
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn built_in_affinity_presets_cover_model_families() {
+    let state = AppState::new(&test_config("sqlite::memory:"))
+        .await
+        .unwrap();
+    let rules = state.db.list_affinity_rules().await.unwrap();
+
+    let gpt = rules
+        .iter()
+        .find(|rule| rule.name == "gpt prompt cache")
+        .unwrap();
+    assert_eq!(gpt.model_regex.as_deref(), Some("^gpt-.*$"));
+    assert_eq!(gpt.request_path.as_deref(), Some("/v1/responses"));
+    assert_eq!(gpt.key_source_type, "json_path");
+    assert_eq!(gpt.key_source_path, "prompt_cache_key");
+    assert!(gpt.skip_retry_on_failure);
+    assert!(gpt.switch_on_success);
+    assert!(!gpt.include_model_name);
+
+    let claude = rules
+        .iter()
+        .find(|rule| rule.name == "claude metadata user")
+        .unwrap();
+    assert_eq!(claude.model_regex.as_deref(), Some("^claude-.*$"));
+    assert_eq!(claude.request_path.as_deref(), Some("/v1/messages"));
+    assert_eq!(claude.key_source_path, "metadata.user_id");
+    assert_eq!(claude.ttl_seconds, 3600);
+    assert!(!claude.include_model_name);
+
+    let gemini_generate = rules
+        .iter()
+        .find(|rule| rule.name == "gemini cached content")
+        .unwrap();
+    assert_eq!(gemini_generate.model_regex.as_deref(), Some("^gemini-.*$"));
+    assert_eq!(
+        gemini_generate.request_path.as_deref(),
+        Some("/v1beta/models/:generateContent")
+    );
+    assert_eq!(gemini_generate.key_source_path, "cachedContent");
+    assert!(!gemini_generate.include_model_name);
+
+    let gemini_stream = rules
+        .iter()
+        .find(|rule| rule.name == "gemini cached content stream")
+        .unwrap();
+    assert_eq!(
+        gemini_stream.request_path.as_deref(),
+        Some("/v1beta/models/:streamGenerateContent")
+    );
+    assert_eq!(gemini_stream.key_source_path, "cachedContent");
+    assert!(!gemini_stream.include_model_name);
+}
+
+#[tokio::test]
 async fn openai_responses_gateway_settles_ledger_and_limits() {
     let upstream = spawn_upstream(json!({
         "id": "resp_test",
@@ -869,6 +922,7 @@ async fn bind_tenant_affinity(state: &AppState, channel_id: i64, skip_retry: boo
             ttl_seconds: 3600,
             skip_retry_on_failure: skip_retry,
             switch_on_success: true,
+            include_model_name: true,
         })
         .await
         .unwrap();

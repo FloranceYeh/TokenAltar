@@ -80,10 +80,7 @@ pub async fn lookup_affinity(
         let Some(value) = extract_value(&rule, headers, body, context) else {
             continue;
         };
-        let cache_key = format!(
-            "{}:{}:{}:{}",
-            rule.name, request.model, rule.group_name, value
-        );
+        let cache_key = affinity_cache_key(&rule, &request.model, &value);
         let channel_id = if let Some(channel_id) = cache.get(&cache_key).await {
             Some(channel_id)
         } else if let Some((channel_id, expires_at)) = db.get_affinity_binding(&cache_key).await? {
@@ -107,6 +104,16 @@ pub async fn lookup_affinity(
         }));
     }
     Ok(None)
+}
+
+fn affinity_cache_key(rule: &AffinityRule, model: &str, value: &str) -> String {
+    let mut parts = vec![rule.name.as_str()];
+    if rule.include_model_name {
+        parts.push(model);
+    }
+    parts.push(rule.group_name.as_str());
+    parts.push(value);
+    parts.join(":")
 }
 
 pub async fn remember_affinity(
@@ -250,5 +257,29 @@ mod tests {
             )
             .await;
         assert_eq!(cache.get("fresh").await, Some(9));
+    }
+
+    #[test]
+    fn cache_key_can_share_binding_across_model_family() {
+        let rule = AffinityRule {
+            id: 1,
+            name: "gpt prompt cache".to_string(),
+            enabled: true,
+            model_regex: Some("^gpt-.*$".to_string()),
+            request_path: Some("/v1/responses".to_string()),
+            user_agent_regex: None,
+            key_source_type: "json_path".to_string(),
+            key_source_path: "prompt_cache_key".to_string(),
+            group_name: "default".to_string(),
+            ttl_seconds: 3600,
+            skip_retry_on_failure: true,
+            switch_on_success: true,
+            include_model_name: false,
+        };
+
+        assert_eq!(
+            affinity_cache_key(&rule, "gpt-5", "trace-a"),
+            affinity_cache_key(&rule, "gpt-5-mini", "trace-a")
+        );
     }
 }

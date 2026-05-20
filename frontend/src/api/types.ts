@@ -151,6 +151,7 @@ export type AffinityRule = {
   ttl_seconds: number
   skip_retry_on_failure: boolean
   switch_on_success: boolean
+  include_model_name: boolean
 }
 
 export type LedgerEntry = {

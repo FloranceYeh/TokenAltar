@@ -226,3 +226,9 @@
 - **Status:** Completed
 - **Next Steps:** Continue reducing page-level template size by extracting feature pages such as API Keys, Channels, Pricing, and Settings.
 - **Context:** Preserved the current tab-driven SPA and single-binary deployment model; verified with frontend build, Rust tests, Clippy, and release build.
+
+## [2026-05-20 14:04] Affinity Model Presets
+- **Changes:** Added migration-seeded GPT, Claude, and Gemini affinity presets, introduced model-name scoping control for affinity cache keys, exposed the control in the console form, documented the preset semantics, and added regression coverage.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Presets follow new-api locality defaults by omitting model names from their cache keys while retaining model-scoped keys for manually created rules by default.

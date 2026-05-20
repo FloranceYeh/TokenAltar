@@ -126,6 +126,7 @@ const ruleForm = reactive({
   ttl_seconds: 3600,
   skip_retry_on_failure: false,
   switch_on_success: true,
+  include_model_name: true,
 })
 const transferForm = reactive({ to_user_id: 0, points: 10, memo: '@TokenAltar PayTo:' })
 const redPacketForm = reactive({ phrase: 'RustIsBest', total_points: 30, total_parts: 3, mode: 'even' })
@@ -1725,6 +1726,7 @@ onBeforeUnmount(stopConsoleEventStream)
             <label>Source <select v-model="ruleForm.key_source_type"><option value="request_header">Header</option><option value="json_path">JSON Path</option><option value="context">Context</option></select></label>
             <label>Source Path <input v-model="ruleForm.key_source_path" /></label>
             <label>TTL <input v-model.number="ruleForm.ttl_seconds" type="number" /></label>
+            <label><input v-model="ruleForm.include_model_name" type="checkbox" /> Model-scoped key</label>
           </div>
           <div class="table-shell">
             <table><tbody><tr v-for="rule in rules" :key="rule.id"><td>{{ rule.name }}</td><td>{{ rule.request_path }}</td><td>{{ rule.key_source_type }}:{{ rule.key_source_path }}</td><td>{{ rule.ttl_seconds }}s</td></tr></tbody></table>

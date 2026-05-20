@@ -1726,7 +1726,8 @@ impl Database {
         let rows = sqlx::query(
             r#"
             SELECT id, name, enabled, model_regex, request_path, user_agent_regex, key_source_type,
-                   key_source_path, group_name, ttl_seconds, skip_retry_on_failure, switch_on_success
+                   key_source_path, group_name, ttl_seconds, skip_retry_on_failure, switch_on_success,
+                   include_model_name
             FROM affinity_rules ORDER BY id DESC
             "#,
         )
@@ -1740,8 +1741,9 @@ impl Database {
             r#"
             INSERT INTO affinity_rules(
               name, enabled, model_regex, request_path, user_agent_regex, key_source_type,
-              key_source_path, group_name, ttl_seconds, skip_retry_on_failure, switch_on_success
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              key_source_path, group_name, ttl_seconds, skip_retry_on_failure, switch_on_success,
+              include_model_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&input.name)
@@ -1755,6 +1757,7 @@ impl Database {
         .bind(input.ttl_seconds)
         .bind(if input.skip_retry_on_failure { 1 } else { 0 })
         .bind(if input.switch_on_success { 1 } else { 0 })
+        .bind(if input.include_model_name { 1 } else { 0 })
         .execute(&self.pool)
         .await?;
         let id = result.last_insert_rowid();
@@ -2343,6 +2346,8 @@ pub struct AffinityRuleInput {
     pub ttl_seconds: i64,
     pub skip_retry_on_failure: bool,
     pub switch_on_success: bool,
+    #[serde(default = "default_include_model_name")]
+    pub include_model_name: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2564,7 +2569,12 @@ fn affinity_rule_from_row(row: &sqlx::sqlite::SqliteRow) -> AffinityRule {
         ttl_seconds: row.get("ttl_seconds"),
         skip_retry_on_failure: row.get::<i64, _>("skip_retry_on_failure") != 0,
         switch_on_success: row.get::<i64, _>("switch_on_success") != 0,
+        include_model_name: row.get::<i64, _>("include_model_name") != 0,
     }
+}
+
+fn default_include_model_name() -> bool {
+    true
 }
 
 fn leaderboard_row(row: &sqlx::sqlite::SqliteRow) -> serde_json::Value {

@@ -47,6 +47,9 @@ Files, embeddings, rerank, realtime, audio, and other non-text extensions are in
 Before any semantic upstream content is sent to the client, retryable upstream failures (`408`, `429`, and `5xx`), connection errors, and semantic-empty replies release the local reservation, put that channel into a short local cooldown, and transparently retry another healthy channel when the matching affinity rule permits fallback.
 When `switch_on_success` is enabled, a successful fallback rewrites the affinity binding to the recovered channel; `skip_retry_on_failure` keeps a bound request pinned and returns the bound channel error instead.
 For streaming requests, heartbeat/comment frames, usage metadata, whitespace-only deltas, and terminal markers do not count as semantic content; the gateway keeps the client stream unopened for those frames and can switch channels if the upstream stream ends empty. Once text or tool-call semantics have been forwarded, the gateway does not interrupt or replay that stream.
+Built-in affinity presets are seeded for GPT Responses (`^gpt-.*$`, `/v1/responses`, `prompt_cache_key`), Claude Messages (`^claude-.*$`, `/v1/messages`, `metadata.user_id`), and Gemini Generate Content (`^gemini-.*$`, direct generate and stream routes, `cachedContent`).
+These presets use a 3600-second TTL, enable `switch_on_success`, and set `skip_retry_on_failure` so cache-local bound traffic does not silently move to another upstream channel.
+They intentionally omit the model name from the affinity cache key, matching new-api's default model-family locality behavior.
 
 ## Management Controls
 
