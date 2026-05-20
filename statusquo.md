@@ -208,3 +208,9 @@
 - **Status:** Completed
 - **Next Steps:** Use the API Keys tab to narrow keys that should not access the whole route pool.
 - **Context:** New keys default to all current route channels; keys that still cover the full pool are auto-granted newly created channels, while manually narrowed keys stay narrowed.
+
+## [2026-05-20 13:23] Compact API Key Channel Cards
+- **Changes:** Compressed API key channel picker cards to a tighter name/action, provider/status/model, and health-strip layout while removing owner, TTFT, quota, and separate model rows from the visible card body.
+- **Status:** Completed
+- **Next Steps:** None.
+- **Context:** Verified with `pnpm --dir frontend build` and Playwright against a temporary local backend; cards now measure about 51px high with the health strip retained.

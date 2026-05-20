@@ -1913,28 +1913,21 @@ onBeforeUnmount(stopConsoleEventStream)
                         @dblclick="addApiKeyChannel(channel.id)"
                       >
                         <div class="channel-select-card-main">
-                          <div>
-                            <strong>{{ channel.name }}</strong>
-                            <span v-if="isAdmin">{{ ownerLabel(channel) }}</span>
-                          </div>
-                          <span class="provider-badge" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
+                          <strong>{{ channel.name }}</strong>
+                          <button class="ghost channel-select-action" type="button" title="Add channel" aria-label="Add channel" @click.stop="addApiKeyChannel(channel.id)">+</button>
                         </div>
                         <div class="channel-select-meta">
+                          <span class="provider-badge compact" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
                           <span class="status" :class="statusClass(channel)">{{ channel.enabled ? channel.status : 'disabled' }}</span>
-                          <span>{{ healthSummary(channel).label }} / {{ formatTtft(healthTotals(channel).avgTtftMs) }}</span>
+                          <span class="channel-select-models">{{ (channel.models || []).join(', ') || '*' }}</span>
                         </div>
-                        <div class="mini-health-strip">
+                        <div class="mini-health-strip compact" :aria-label="`Health ${healthSummary(channel).label}`">
                           <span
                             v-for="window in healthWindows(channel).slice(-16)"
                             :key="`${channel.id}:available-mini:${window.window_start_at}`"
                             class="health-window"
                             :class="healthBarClass(window)"
                           ></span>
-                        </div>
-                        <div class="channel-select-models">{{ (channel.models || []).join(', ') || '*' }}</div>
-                        <div class="channel-select-foot">
-                          <span>{{ quotaSummary(channel) }}</span>
-                          <button class="ghost" type="button" @click.stop="addApiKeyChannel(channel.id)">Add</button>
                         </div>
                       </article>
                       <div v-if="filteredAvailableApiKeyChannels.length === 0" class="channel-picker-empty">No available channels match.</div>
@@ -1962,28 +1955,21 @@ onBeforeUnmount(stopConsoleEventStream)
                         @dblclick="removeApiKeyChannel(channel.id)"
                       >
                         <div class="channel-select-card-main">
-                          <div>
-                            <strong>{{ channel.name }}</strong>
-                            <span v-if="isAdmin">{{ ownerLabel(channel) }}</span>
-                          </div>
-                          <span class="provider-badge" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
+                          <strong>{{ channel.name }}</strong>
+                          <button class="ghost danger channel-select-action" type="button" title="Remove channel" aria-label="Remove channel" @click.stop="removeApiKeyChannel(channel.id)">-</button>
                         </div>
                         <div class="channel-select-meta">
+                          <span class="provider-badge compact" :class="providerTone(channel.provider)">{{ channel.provider }}</span>
                           <span class="status" :class="statusClass(channel)">{{ channel.enabled ? channel.status : 'disabled' }}</span>
-                          <span>{{ healthSummary(channel).label }} / {{ formatTtft(healthTotals(channel).avgTtftMs) }}</span>
+                          <span class="channel-select-models">{{ (channel.models || []).join(', ') || '*' }}</span>
                         </div>
-                        <div class="mini-health-strip">
+                        <div class="mini-health-strip compact" :aria-label="`Health ${healthSummary(channel).label}`">
                           <span
                             v-for="window in healthWindows(channel).slice(-16)"
                             :key="`${channel.id}:selected-mini:${window.window_start_at}`"
                             class="health-window"
                             :class="healthBarClass(window)"
                           ></span>
-                        </div>
-                        <div class="channel-select-models">{{ (channel.models || []).join(', ') || '*' }}</div>
-                        <div class="channel-select-foot">
-                          <span>{{ quotaSummary(channel) }}</span>
-                          <button class="ghost danger" type="button" @click.stop="removeApiKeyChannel(channel.id)">Remove</button>
                         </div>
                       </article>
                       <div v-if="filteredSelectedApiKeyChannels.length === 0" class="channel-picker-empty">Drop channels here to authorize this key.</div>
