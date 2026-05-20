@@ -4,9 +4,11 @@
   <img src="assets/banner.png" alt="TokenAltar logo" width="400" />
 </p>
 
+> **TokenAltar is a self-contained LLM capacity console for small teams, research groups, private circles, and API-sharing communities.**
+
+
 ![TokenAltar project guide](frontend/public/guides/tokenaltar-project-guide.png)
 
-**TokenAltar is a self-contained LLM capacity console for small teams, research groups, private circles, and API-sharing communities.**
 
 It pools upstream OpenAI, Anthropic, Gemini, and compatible model capacity behind one local gateway. Members call TokenAltar with local API keys; providers contribute upstream channels; the console keeps routing, quotas, pricing, health, point settlement, and social-economy flows visible from one embedded Vue UI.
 
